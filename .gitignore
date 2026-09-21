@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# raw CNPJ/OSM datasets and generated exports — never commit large or
+# privacy-sensitive data to git (see CNPJ_IMPORT.md, DATABASE.md)
+/datasets/
+tools/cnpj-importer/input/
+tools/cnpj-importer/output/
+tools/cnpj-importer/*.log
+*.csv.gz
+*.parquet
+/exports/
+/logs/

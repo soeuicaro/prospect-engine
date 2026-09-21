@@ -1,0 +1,2 @@
+# No dependencies. cnpj_importer.py uses only the Python 3.9+ standard
+# library (csv, json, argparse, pathlib) on purpose — zero-cost, zero-install.

@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Prospect Engine
 
-## Getting Started
+> De empresas locais a oportunidades comerciais.
 
-First, run the development server:
+A local B2B prospecting intelligence machine for an audiovisual/social-media production business: turns **city + region + niches + criteria** into a qualified, scored, prioritized pipeline of companies to contact — with decision-maker intelligence, digital-presence analysis, recommended offers, ready-to-send messages, follow-ups and a CRM. Built R$0-first: no paid APIs are required for the core product to work.
+
+See `PROMPT_MASTER` context in project history for the full product spec this was built from. This README covers what actually exists and how to run it.
+
+## Status: MVP implemented
+
+Working end-to-end today:
+
+- Auth (Supabase Auth) + workspace onboarding (multi-tenant, RLS-isolated)
+- Companies: create, list with filters/search/pagination/bulk actions, detailed lead page
+- Prospect Score engine (configurable weights/rules per workspace) with a transparent "Why this lead?" evidence trail
+- Decision-maker intelligence with confidence levels (never fabricated)
+- Website Analyzer (robots.txt-respecting, single-page fetch): status/flags, social link discovery, gap-fills missing contact fields, feeds the score
+- "Open in Google Maps" validation link (never scrapes/stores Maps content)
+- Discovery Engine via OpenStreetMap (free, public)
+- CSV import with column mapping, dedup detection, tolerant per-row error handling
+- CNPJ dataset local preprocessor (`tools/cnpj-importer`, stdlib-only Python)
+- Campaigns (filters → audience preview → activate), pipeline stages, campaign leads
+- Assisted outreach (WhatsApp/email links, never automated sending) with message templates and auto follow-up scheduling
+- CRM: Kanban pipeline (drag & drop), tasks, follow-ups queue, notes, stage history timeline
+- Suppression list (do-not-contact) enforced before campaign audiences are built
+- Industry playbooks, offers, content ideas (template-based, no AI)
+- Settings: business profile, scoring weights, niche builder, contact-rate limits, feature flags (Zero-Cost Guard)
+- Audit log on sensitive actions
+- Unit tests for the domain logic (scoring, dedup, CNPJ/phone normalization, templates)
+
+Documented as roadmap, not built yet (see `ARCHITECTURE.md` §Roadmap): automated job queue/cron digests, XLSX import, workspace backup/export, command palette, dark mode toggle UI, multi-seat roles beyond the schema.
+
+## Stack
+
+- **Frontend/Backend:** Next.js 16 (App Router, Server Actions, Server Components), TypeScript, Tailwind CSS v4, shadcn/ui
+- **Database/Auth:** Supabase (Postgres + Auth), Row Level Security on every tenant table
+- **Deploy:** Vercel
+- **Validation:** Zod
+- **Tests:** Vitest
+
+Next.js 16 renamed `middleware.ts` → `proxy.ts` (session refresh lives in `proxy.ts` + `src/lib/supabase/middleware.ts`) — see `node_modules/next/dist/docs` if anything here looks unfamiliar.
+
+## Quickstart
 
 ```bash
+npm install
+cp .env.example .env.local   # fill in Supabase values, see ENVIRONMENT.md
+# Apply supabase/migrations/*.sql to your Supabase project — see DEPLOYMENT.md
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then sign up, create a workspace (seeds your pipeline stages, scoring weights, starter offers/templates/playbooks automatically), and either create a company manually, import a CSV, or run a Discovery search.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Documentation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| File | Covers |
+|---|---|
+| `ARCHITECTURE.md` | System design, provider abstractions, roadmap |
+| `DATABASE.md` | Schema, RLS strategy, indexing |
+| `SECURITY.md` | RLS, service-role handling, checklist |
+| `DATA_SOURCES.md` | Every external data source and its terms |
+| `CNPJ_IMPORT.md` | How to get and import Receita Federal data |
+| `MAPS_USAGE.md` | Exactly what we do and don't do with Google Maps |
+| `DEPLOYMENT.md` | Supabase + Vercel setup |
+| `FREE_PLAN.md` | Zero-cost architecture and current plan limits |
+| `TESTING.md` | What's tested and how to run it |
+| `TROUBLESHOOTING.md` | Common issues |
+| `ENVIRONMENT.md` | Environment variables |
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run dev      # local dev server
+npm run build    # production build (also type-checks)
+npm run lint      # ESLint
+npm test         # Vitest unit tests
+```
