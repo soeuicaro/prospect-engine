@@ -4,8 +4,12 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const user = await requireUser();
-  const workspace = await requireWorkspace();
+  // requireUser()/requireWorkspace() share a single, per-request-memoized
+  // auth.getUser() call (see lib/workspace.ts), so running them concurrently
+  // here doesn't double the Supabase Auth round-trip — it just lets the
+  // profile query below start as soon as the user id is known instead of
+  // waiting for the workspace lookup too.
+  const [user, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
 
   const supabase = await createClient();
   const { data: profile } = await supabase

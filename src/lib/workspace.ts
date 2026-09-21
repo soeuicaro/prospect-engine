@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { Workspace } from "@/types/database";
@@ -56,6 +57,30 @@ const GUEST_WORKSPACE: Workspace = {
 };
 
 /**
+ * `supabase.auth.getUser()` is a network round-trip to the Supabase Auth
+ * server (it validates the JWT server-side, it doesn't just decode the
+ * cookie). The layout and every page each ask "who is the user?" and "what
+ * is their workspace?" independently, which used to mean 2-3 of these
+ * round-trips, sequentially, before a single byte of the page could render.
+ * `cache()` memoizes this per request (per React render pass), so no matter
+ * how many times requireUser()/requireWorkspace() are called while
+ * rendering one route, the Auth server is only hit once.
+ */
+const getAuthUser = cache(async (): Promise<User | null> => {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user;
+  } catch {
+    // Supabase not configured/reachable — treat as signed out instead of
+    // crashing the page.
+    return null;
+  }
+});
+
+/**
  * MVP is single-workspace-per-user (multi-workspace UI can be added later
  * without a schema change — workspace_members already supports it). Returns
  * the first workspace the current user belongs to, or null.
@@ -63,16 +88,14 @@ const GUEST_WORKSPACE: Workspace = {
  * Never throws: if Supabase isn't configured/reachable, this resolves to
  * null (as if no workspace exists yet) instead of crashing the page — the
  * dev bypass in requireWorkspace() below is what actually decides what to
- * do about that.
+ * do about that. Memoized per request via cache() — see getAuthUser() above.
  */
-export async function getCurrentWorkspace(): Promise<Workspace | null> {
+export const getCurrentWorkspace = cache(async (): Promise<Workspace | null> => {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return null;
 
+    const supabase = await createClient();
     const { data: membership } = await supabase
       .from("workspace_members")
       .select("workspace_id")
@@ -92,7 +115,7 @@ export async function getCurrentWorkspace(): Promise<Workspace | null> {
   } catch {
     return null;
   }
-}
+});
 
 /** Use in Server Components/Actions that require an active workspace. */
 export async function requireWorkspace(): Promise<Workspace> {
@@ -103,16 +126,8 @@ export async function requireWorkspace(): Promise<Workspace> {
 }
 
 export async function requireUser(): Promise<User> {
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) return user;
-  } catch {
-    // Supabase not configured/reachable — fall through to the bypass or
-    // the login redirect below instead of crashing the page.
-  }
+  const user = await getAuthUser();
+  if (user) return user;
   if (!REQUIRE_AUTH) return GUEST_USER;
   redirect("/login");
 }
