@@ -70,6 +70,14 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
     query = query.order("created_at", { ascending: filters.sortDir === "asc" });
   } else if (filters.sortBy === "name") {
     query = query.order("trade_name", { ascending: filters.sortDir !== "desc" });
+  } else if (filters.sortBy === "score") {
+    // Sort in the DB via the joined table, same pattern as dashboard.ts —
+    // sorting the already-paginated JS array only ordered the 25 rows on
+    // the current page and left every other page in created_at order.
+    query = query.order("prospect_score", {
+      referencedTable: "company_scores",
+      ascending: filters.sortDir === "asc",
+    });
   } else {
     query = query.order("created_at", { ascending: false });
   }
@@ -98,7 +106,7 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
       | null;
   };
 
-  let rows: CompanyListRow[] = ((data ?? []) as Row[]).map((row) => {
+  const rows: CompanyListRow[] = ((data ?? []) as Row[]).map((row) => {
     const industry = Array.isArray(row.industries) ? row.industries[0] : row.industries;
     const stage = Array.isArray(row.pipeline_stages) ? row.pipeline_stages[0] : row.pipeline_stages;
     const score = Array.isArray(row.company_scores) ? row.company_scores[0] : row.company_scores;
@@ -121,12 +129,6 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
       opportunity_level: score?.opportunity_level ?? "BAIXO",
     };
   });
-
-  if (filters.sortBy === "score") {
-    rows = rows.sort((a, b) =>
-      filters.sortDir === "asc" ? a.prospect_score - b.prospect_score : b.prospect_score - a.prospect_score
-    );
-  }
 
   return { rows, total: count ?? 0, page, pageSize };
 }

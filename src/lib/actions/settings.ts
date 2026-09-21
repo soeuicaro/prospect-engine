@@ -33,7 +33,7 @@ export async function updateBusinessProfileAction(
     sender_name: String(formData.get("sender_name") ?? ""),
   };
 
-  await supabase
+  const { error } = await supabase
     .from("workspaces")
     .update({
       name: String(formData.get("name") ?? workspace.name),
@@ -43,6 +43,7 @@ export async function updateBusinessProfileAction(
       business_profile: businessProfile,
     })
     .eq("id", workspace.id);
+  if (error) return { error: "Não foi possível atualizar o perfil do workspace." };
 
   revalidatePath("/settings");
   return { success: true };
@@ -69,9 +70,10 @@ export async function updateScoringWeightsAction(
     const raw = formData.get(`weight_${category}`);
     if (raw === null) continue;
     const weight = Math.max(0, Math.min(1, Number(raw) || 0));
-    await supabase
+    const { error } = await supabase
       .from("scoring_category_weights")
       .upsert({ workspace_id: workspace.id, category, weight }, { onConflict: "workspace_id,category" });
+    if (error) return { error: "Não foi possível salvar os pesos de score." };
   }
 
   revalidatePath("/settings");
@@ -86,7 +88,7 @@ export async function updateContactLimitsAction(
   const workspace = await requireWorkspace();
   const supabase = await createClient();
 
-  await supabase
+  const { error } = await supabase
     .from("workspaces")
     .update({
       contact_limits: {
@@ -96,6 +98,7 @@ export async function updateContactLimitsAction(
       },
     })
     .eq("id", workspace.id);
+  if (error) return { error: "Não foi possível atualizar os limites de contato." };
 
   revalidatePath("/settings");
   return { success: true };
@@ -107,7 +110,8 @@ export async function toggleFeatureFlagAction(flag: string, enabled: boolean): P
   const supabase = await createClient();
 
   const nextFlags = { ...workspace.feature_flags, [flag]: enabled };
-  await supabase.from("workspaces").update({ feature_flags: nextFlags }).eq("id", workspace.id);
+  const { error } = await supabase.from("workspaces").update({ feature_flags: nextFlags }).eq("id", workspace.id);
+  if (error) return { error: "Não foi possível atualizar a feature flag." };
 
   await logAudit(supabase, {
     workspaceId: workspace.id,

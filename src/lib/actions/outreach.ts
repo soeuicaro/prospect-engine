@@ -95,11 +95,12 @@ export async function recordResponseAction(
   const workspace = await requireWorkspace();
   const supabase = await createClient();
 
-  await supabase
+  const { error } = await supabase
     .from("lead_outreach")
     .update({ response_type: responseType, responded_at: new Date().toISOString() })
     .eq("id", outreachId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível registrar a resposta." };
 
   if (responseType === "OPT_OUT") {
     await supabase.from("suppression_list").insert({

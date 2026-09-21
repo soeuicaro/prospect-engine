@@ -70,7 +70,7 @@ export async function recomputeCompanyScore(
   const result = computeProspectScore(signals, rules ?? [], weights ?? []);
   const dataQuality = computeDataQualityScore(company, (contactCount ?? 0) > 0, Boolean(analysis));
 
-  await supabase.from("company_scores").upsert(
+  const { error: scoreError } = await supabase.from("company_scores").upsert(
     {
       workspace_id: workspaceId,
       company_id: companyId,
@@ -88,6 +88,11 @@ export async function recomputeCompanyScore(
     },
     { onConflict: "company_id" }
   );
+  // The persisted score is the entire point of this function — callers
+  // treat a non-null return as "the score was saved" (e.g.
+  // refreshLeadScoreAction does `if (!result) return { error }`), so a
+  // failed upsert here must not be reported as a successful recompute.
+  if (scoreError) return null;
 
   await supabase.from("company_score_factors").delete().eq("company_id", companyId);
   if (result.factors.length) {

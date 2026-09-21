@@ -24,11 +24,12 @@ export async function bulkChangeStageAction(companyIds: string[], stageId: strin
 
   if (!companies?.length) return { error: "Empresas não encontradas." };
 
-  await supabase
+  const { error: stageError } = await supabase
     .from("companies")
     .update({ pipeline_stage_id: stageId })
     .eq("workspace_id", workspace.id)
     .in("id", companyIds);
+  if (stageError) return { error: "Não foi possível mover as empresas selecionadas." };
 
   await supabase.from("lead_stage_history").insert(
     companies.map((c) => ({
@@ -62,7 +63,7 @@ export async function bulkSuppressAction(companyIds: string[]): Promise<ActionSt
   const user = await requireUser();
   const supabase = await createClient();
 
-  await supabase.from("suppression_list").insert(
+  const { error } = await supabase.from("suppression_list").insert(
     companyIds.map((id) => ({
       workspace_id: workspace.id,
       company_id: id,
@@ -71,6 +72,7 @@ export async function bulkSuppressAction(companyIds: string[]): Promise<ActionSt
       created_by: user.id,
     }))
   );
+  if (error) return { error: "Não foi possível suprimir as empresas selecionadas." };
 
   await logAudit(supabase, {
     workspaceId: workspace.id,

@@ -35,7 +35,7 @@ export async function analyzeWebsiteAction(companyId: string): Promise<ActionSta
 
   const result = await analyzeWebsite(company.website);
 
-  await supabase.from("company_analysis").upsert(
+  const { error: analysisError } = await supabase.from("company_analysis").upsert(
     {
       workspace_id: workspace.id,
       company_id: companyId,
@@ -51,6 +51,7 @@ export async function analyzeWebsiteAction(companyId: string): Promise<ActionSta
     },
     { onConflict: "company_id" }
   );
+  if (analysisError) return { error: "Não foi possível salvar a análise do website." };
 
   // Gap-fill contact fields only if the company doesn't already have them.
   const updates: Partial<Pick<Company, "phone" | "email" | "whatsapp">> = {};

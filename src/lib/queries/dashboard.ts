@@ -108,6 +108,10 @@ export async function getDashboardData(workspaceId: string): Promise<DashboardDa
   const meetingStageIds = stageList.filter((s) => s.key === "MEETING").map((s) => s.id);
   const proposalStageIds = stageList.filter((s) => s.key === "PROPOSAL").map((s) => s.id);
   const wonStageIds = stageList.filter((s) => s.kind === "won").map((s) => s.id);
+  // "Qualified" = any stage past intake. Derived from the `stages` result
+  // already fetched above instead of re-querying pipeline_stages — this used
+  // to be a duplicate fetch that also forced a 3rd sequential round trip.
+  const qualifiedStageIds = stageList.filter((s) => s.key !== "NEW").map((s) => s.id);
 
   const [meetingsRes, proposalsRes, wonRes, qualifiedRes] = await Promise.all([
     meetingStageIds.length
@@ -131,23 +135,16 @@ export async function getDashboardData(workspaceId: string): Promise<DashboardDa
           .eq("workspace_id", workspaceId)
           .in("pipeline_stage_id", wonStageIds)
       : Promise.resolve({ count: 0 }),
-    supabase
-      .from("pipeline_stages")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .neq("key", "NEW"),
+    qualifiedStageIds.length
+      ? supabase
+          .from("companies")
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", workspaceId)
+          .in("pipeline_stage_id", qualifiedStageIds)
+      : Promise.resolve({ count: 0 }),
   ]);
 
-  let qualifiedCount = 0;
-  const qualifiedStageIds = (qualifiedRes.data ?? []).map((s) => s.id);
-  if (qualifiedStageIds.length) {
-    const { count } = await supabase
-      .from("companies")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", workspaceId)
-      .in("pipeline_stage_id", qualifiedStageIds);
-    qualifiedCount = count ?? 0;
-  }
+  const qualifiedCount = qualifiedRes.count ?? 0;
 
   const contacted = contactedOutreach.count ?? 0;
   const replies = repliedOutreach.count ?? 0;

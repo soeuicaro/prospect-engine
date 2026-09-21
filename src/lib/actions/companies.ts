@@ -165,7 +165,12 @@ export async function changeStageAction(companyId: string, stageId: string): Pro
 
   if (!company) return { error: "Empresa não encontrada." };
 
-  await supabase.from("companies").update({ pipeline_stage_id: stageId }).eq("id", companyId);
+  const { error: stageError } = await supabase
+    .from("companies")
+    .update({ pipeline_stage_id: stageId })
+    .eq("id", companyId);
+  if (stageError) return { error: "Não foi possível mover a empresa de etapa." };
+
   await supabase.from("lead_stage_history").insert({
     workspace_id: workspace.id,
     company_id: companyId,
@@ -198,12 +203,13 @@ export async function addNoteAction(_prevState: ActionState, formData: FormData)
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
 
-  await supabase.from("notes").insert({
+  const { error } = await supabase.from("notes").insert({
     workspace_id: workspace.id,
     company_id: parsed.data.company_id,
     author_id: user.id,
     body: parsed.data.body,
   });
+  if (error) return { error: "Não foi possível adicionar a nota." };
 
   revalidatePath(`/companies/${parsed.data.company_id}`);
   return { success: true };
@@ -223,7 +229,7 @@ export async function addTaskAction(_prevState: ActionState, formData: FormData)
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
 
-  await supabase.from("tasks").insert({
+  const { error } = await supabase.from("tasks").insert({
     workspace_id: workspace.id,
     company_id: parsed.data.company_id || null,
     title: parsed.data.title,
@@ -232,6 +238,7 @@ export async function addTaskAction(_prevState: ActionState, formData: FormData)
     priority: parsed.data.priority,
     created_by: user.id,
   });
+  if (error) return { error: "Não foi possível criar a tarefa." };
 
   if (parsed.data.company_id) revalidatePath(`/companies/${parsed.data.company_id}`);
   revalidatePath("/tasks");
@@ -241,11 +248,12 @@ export async function addTaskAction(_prevState: ActionState, formData: FormData)
 export async function completeTaskAction(taskId: string): Promise<ActionState> {
   const workspace = await requireWorkspace();
   const supabase = await createClient();
-  await supabase
+  const { error } = await supabase
     .from("tasks")
     .update({ status: "DONE", completed_at: new Date().toISOString() })
     .eq("id", taskId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível concluir a tarefa." };
   revalidatePath("/tasks");
   return { success: true };
 }
@@ -264,13 +272,14 @@ export async function scheduleFollowupAction(
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
 
-  await supabase.from("followups").insert({
+  const { error } = await supabase.from("followups").insert({
     workspace_id: workspace.id,
     company_id: parsed.data.company_id,
     follow_up_at: new Date(parsed.data.follow_up_at).toISOString(),
     note: parsed.data.note || null,
     follow_up_type: "manual",
   });
+  if (error) return { error: "Não foi possível agendar o follow-up." };
 
   revalidatePath(`/companies/${parsed.data.company_id}`);
   revalidatePath("/followups");
@@ -284,11 +293,12 @@ export async function completeFollowupAction(
   const workspace = await requireWorkspace();
   const supabase = await createClient();
 
-  await supabase
+  const { error } = await supabase
     .from("followups")
     .update({ status, completed_at: new Date().toISOString() })
     .eq("id", followupId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível atualizar o follow-up." };
 
   if (status === "OPT_OUT") {
     const { data: followup } = await supabase
@@ -327,7 +337,7 @@ export async function suppressCompanyAction(
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
 
-  await supabase.from("suppression_list").insert({
+  const { error } = await supabase.from("suppression_list").insert({
     workspace_id: workspace.id,
     company_id: parsed.data.company_id || null,
     contact_id: parsed.data.contact_id || null,
@@ -336,6 +346,7 @@ export async function suppressCompanyAction(
     reason: parsed.data.reason,
     created_by: user.id,
   });
+  if (error) return { error: "Não foi possível adicionar a supressão." };
 
   await logAudit(supabase, {
     workspaceId: workspace.id,
@@ -355,7 +366,11 @@ export async function refreshLeadScoreAction(companyId: string): Promise<ActionS
   const supabase = await createClient();
   const result = await recomputeCompanyScore(supabase, workspace.id, companyId);
   if (!result) return { error: "Não foi possível recalcular o score." };
-  await supabase.from("companies").update({ last_verified_at: new Date().toISOString() }).eq("id", companyId);
+  const { error: verifyError } = await supabase
+    .from("companies")
+    .update({ last_verified_at: new Date().toISOString() })
+    .eq("id", companyId);
+  if (verifyError) return { error: "Não foi possível atualizar a data de verificação." };
   revalidatePath(`/companies/${companyId}`);
   return { success: true };
 }
@@ -364,7 +379,7 @@ export async function validateMapsAction(companyId: string, discrepancy: boolean
   const workspace = await requireWorkspace();
   const supabase = await createClient();
 
-  await supabase
+  const { error } = await supabase
     .from("companies")
     .update({
       maps_validation_status: discrepancy ? "DISCREPANCY_FOUND" : "VALIDATED_BY_USER",
@@ -372,6 +387,7 @@ export async function validateMapsAction(companyId: string, discrepancy: boolean
     })
     .eq("id", companyId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível validar o endereço." };
 
   revalidatePath(`/companies/${companyId}`);
   return { success: true };
@@ -380,11 +396,12 @@ export async function validateMapsAction(companyId: string, discrepancy: boolean
 export async function archiveCompanyAction(companyId: string): Promise<ActionState> {
   const workspace = await requireWorkspace();
   const supabase = await createClient();
-  await supabase
+  const { error } = await supabase
     .from("companies")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", companyId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível arquivar a empresa." };
   revalidatePath("/companies");
   redirect("/companies");
 }
@@ -393,11 +410,12 @@ export async function softDeleteCompanyAction(companyId: string): Promise<Action
   const workspace = await requireWorkspace();
   const user = await requireUser();
   const supabase = await createClient();
-  await supabase
+  const { error } = await supabase
     .from("companies")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", companyId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível excluir a empresa." };
   await logAudit(supabase, {
     workspaceId: workspace.id,
     userId: user.id,

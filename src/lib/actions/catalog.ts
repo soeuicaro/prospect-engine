@@ -21,7 +21,7 @@ export async function createTemplateAction(_prevState: ActionState, formData: Fo
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
 
-  await supabase.from("message_templates").insert({
+  const { error } = await supabase.from("message_templates").insert({
     workspace_id: workspace.id,
     name: parsed.data.name,
     industry_id: parsed.data.industry_id || null,
@@ -30,6 +30,7 @@ export async function createTemplateAction(_prevState: ActionState, formData: Fo
     subject: parsed.data.subject || null,
     body: parsed.data.body,
   });
+  if (error) return { error: "Não foi possível criar o template." };
 
   revalidatePath("/templates");
   return { success: true };
@@ -50,7 +51,7 @@ export async function createOfferAction(_prevState: ActionState, formData: FormD
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
 
-  await supabase.from("offers").insert({
+  const { error } = await supabase.from("offers").insert({
     workspace_id: workspace.id,
     name: parsed.data.name,
     description: parsed.data.description || null,
@@ -60,6 +61,7 @@ export async function createOfferAction(_prevState: ActionState, formData: FormD
     ticket_min: parsed.data.ticket_min ?? null,
     ticket_max: parsed.data.ticket_max ?? null,
   });
+  if (error) return { error: "Não foi possível criar a oferta." };
 
   revalidatePath("/offers");
   return { success: true };
@@ -68,7 +70,12 @@ export async function createOfferAction(_prevState: ActionState, formData: FormD
 export async function toggleOfferActiveAction(offerId: string, active: boolean): Promise<ActionState> {
   const workspace = await requireWorkspace();
   const supabase = await createClient();
-  await supabase.from("offers").update({ active }).eq("id", offerId).eq("workspace_id", workspace.id);
+  const { error } = await supabase
+    .from("offers")
+    .update({ active })
+    .eq("id", offerId)
+    .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível atualizar a oferta." };
   revalidatePath("/offers");
   return { success: true };
 }

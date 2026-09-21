@@ -124,10 +124,15 @@ export async function buildCampaignAudienceAction(campaignId: string): Promise<A
     });
 
   if (rowsToInsert.length) {
-    await supabase.from("campaign_leads").insert(rowsToInsert);
+    const { error } = await supabase.from("campaign_leads").insert(rowsToInsert);
+    if (error) return { error: "Não foi possível montar a audiência da campanha." };
   }
 
-  await supabase.from("campaigns").update({ status: "READY" }).eq("id", campaignId);
+  const { error: statusError } = await supabase
+    .from("campaigns")
+    .update({ status: "READY" })
+    .eq("id", campaignId);
+  if (statusError) return { error: "Audiência montada, mas não foi possível atualizar o status da campanha." };
 
   revalidatePath(`/campaigns/${campaignId}`);
   return { success: true };
@@ -138,11 +143,12 @@ export async function activateCampaignAction(campaignId: string): Promise<Action
   const user = await requireUser();
   const supabase = await createClient();
 
-  await supabase
+  const { error } = await supabase
     .from("campaigns")
     .update({ status: "ACTIVE" })
     .eq("id", campaignId)
     .eq("workspace_id", workspace.id);
+  if (error) return { error: "Não foi possível ativar a campanha." };
 
   await logAudit(supabase, {
     workspaceId: workspace.id,

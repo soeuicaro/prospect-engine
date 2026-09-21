@@ -7,8 +7,18 @@ import { requireWorkspace, requireUser } from "@/lib/workspace";
 import { normalizeCnpj } from "@/lib/domain/cnpj";
 import { normalizePhoneBR, normalizeEmail } from "@/lib/domain/phone";
 import { findBestDedupMatch, type DedupCandidate } from "@/lib/domain/dedup";
-import { recomputeCompanyScore } from "@/lib/actions/scoring";
+import { computeProspectScore, computeDataQualityScore } from "@/lib/domain/scoring";
 import { logAudit } from "@/lib/actions/audit";
+import type { ScoringRule, ScoringCategoryWeight, Company, CompanySource, CompanyScores, CompanyScoreFactor } from "@/types/database";
+
+/** Splits an array into fixed-size chunks for batched Supabase writes. */
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+const INSERT_BATCH_SIZE = 500;
 
 // V1 processes synchronously within one request — safe up to this size on
 // Vercel Functions (Node runtime, generous timeout). Larger files should be
@@ -85,41 +95,65 @@ export async function runImportAction(formData: FormData): Promise<ImportRunResu
   const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
   const rows = parsed.data.slice(0, MAX_IMPORT_ROWS);
 
-  const { data: importJob } = await supabase
-    .from("imports")
-    .insert({
-      workspace_id: workspace.id,
-      file_name: file.name,
-      source_type: "CSV",
-      status: "RUNNING",
-      column_mapping: mapping,
-      total_rows: rows.length,
-      created_by: user.id,
-      started_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  const { data: newStage } = await supabase
-    .from("pipeline_stages")
-    .select("id")
-    .eq("workspace_id", workspace.id)
-    .eq("key", "NEW")
-    .maybeSingle();
-
-  const { data: existingCompanies } = await supabase
-    .from("companies")
-    .select("id, cnpj, website_domain, phone, email, trade_name, legal_name, city")
-    .eq("workspace_id", workspace.id)
-    .is("deleted_at", null);
+  // All independent reads needed before any row can be processed — fetched
+  // in one round trip instead of four sequential ones. Scoring rules/weights
+  // are workspace-wide and identical for every row, so they're read once
+  // here rather than re-fetched per company (previously the #1 bottleneck:
+  // recomputeCompanyScore() ran ~10 queries per row, sequentially, for up to
+  // MAX_IMPORT_ROWS rows).
+  const [{ data: importJob }, { data: newStage }, { data: existingCompanies }, { data: rules }, { data: weights }] =
+    await Promise.all([
+      supabase
+        .from("imports")
+        .insert({
+          workspace_id: workspace.id,
+          file_name: file.name,
+          source_type: "CSV",
+          status: "RUNNING",
+          column_mapping: mapping,
+          total_rows: rows.length,
+          created_by: user.id,
+          started_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single(),
+      supabase
+        .from("pipeline_stages")
+        .select("id")
+        .eq("workspace_id", workspace.id)
+        .eq("key", "NEW")
+        .maybeSingle(),
+      supabase
+        .from("companies")
+        .select("id, cnpj, website_domain, phone, email, trade_name, legal_name, city")
+        .eq("workspace_id", workspace.id)
+        .is("deleted_at", null),
+      supabase.from("scoring_rules").select("*").eq("workspace_id", workspace.id).eq("enabled", true),
+      supabase.from("scoring_category_weights").select("*").eq("workspace_id", workspace.id),
+    ]);
 
   const existing: DedupCandidate[] = (existingCompanies ?? []) as DedupCandidate[];
+  const scoringRules = (rules ?? []) as ScoringRule[];
+  const scoringWeights = (weights ?? []) as ScoringCategoryWeight[];
 
-  let created = 0;
   let duplicates = 0;
   let errors = 0;
   let processed = 0;
 
+  interface PreparedRow {
+    rowNumber: number;
+    company: Partial<Company> & { id: string };
+    source: Partial<CompanySource>;
+    score: Partial<CompanyScores>;
+    scoreFactors: Partial<CompanyScoreFactor>[];
+  }
+
+  const toInsert: PreparedRow[] = [];
+  const importErrorRows: { import_id: string; row_number: number; error_message: string; raw_row: Record<string, string> }[] = [];
+
+  // Pass 1: pure in-memory work only (mapping, normalization, dedup,
+  // scoring) — no DB calls in this loop at all, so 2000 rows costs
+  // milliseconds of CPU instead of thousands of network round trips.
   for (const row of rows) {
     processed++;
     try {
@@ -131,7 +165,7 @@ export async function runImportAction(formData: FormData): Promise<ImportRunResu
       if (!mapped.trade_name || !mapped.city || !mapped.state) {
         errors++;
         if (importJob) {
-          await supabase.from("import_errors").insert({
+          importErrorRows.push({
             import_id: importJob.id,
             row_number: processed,
             error_message: "Campos obrigatórios ausentes (nome fantasia, cidade ou UF).",
@@ -163,9 +197,53 @@ export async function runImportAction(formData: FormData): Promise<ImportRunResu
         continue;
       }
 
-      const { data: company } = await supabase
-        .from("companies")
-        .insert({
+      const id = crypto.randomUUID();
+
+      // Freshly-imported companies never have industry_id set (not an
+      // importable field), contacts, social profiles, or website analysis
+      // yet — so the score signals that would normally require 5 extra
+      // reads (industries, playbooks, social profiles, analysis, contact
+      // count) are all known statically for this path.
+      const scoreResult = computeProspectScore(
+        {
+          company: {
+            website: mapped.website || null,
+            phone: mapped.phone || null,
+            email,
+            whatsapp: mapped.whatsapp || null,
+            opened_at: null,
+            estimated_size: null,
+            tags: [],
+            industry_id: null,
+            city: mapped.city,
+            state: mapped.state.toUpperCase().slice(0, 2),
+          },
+          industry: null,
+          socialProfiles: [],
+          analysis: null,
+          hasOfferMapped: false,
+        },
+        scoringRules,
+        scoringWeights
+      );
+      const dataQualityScore = computeDataQualityScore(
+        {
+          cnpj,
+          phone: mapped.phone || null,
+          email,
+          website: mapped.website || null,
+          trade_name: mapped.trade_name,
+          street: mapped.street || null,
+          city: mapped.city,
+        },
+        false,
+        false
+      );
+
+      toInsert.push({
+        rowNumber: processed,
+        company: {
+          id,
           workspace_id: workspace.id,
           trade_name: mapped.trade_name,
           legal_name: mapped.legal_name || null,
@@ -182,30 +260,46 @@ export async function runImportAction(formData: FormData): Promise<ImportRunResu
           state: mapped.state.toUpperCase().slice(0, 2),
           postal_code: mapped.postal_code || null,
           pipeline_stage_id: newStage?.id ?? null,
-        })
-        .select("id")
-        .single();
-
-      if (!company) {
-        errors++;
-        continue;
-      }
-
-      await supabase.from("company_sources").insert({
-        workspace_id: workspace.id,
-        company_id: company.id,
-        source_type: "IMPORT_CSV",
-        source_name: file.name,
-        confidence: "MEDIUM",
+          data_quality_score: dataQualityScore,
+        },
+        source: {
+          workspace_id: workspace.id,
+          company_id: id,
+          source_type: "IMPORT_CSV",
+          source_name: file.name,
+          confidence: "MEDIUM",
+        },
+        score: {
+          workspace_id: workspace.id,
+          company_id: id,
+          digital_presence_score: scoreResult.categoryScores.digital_presence,
+          content_need_score: scoreResult.categoryScores.content_need,
+          purchase_capacity_score: scoreResult.categoryScores.purchase_capacity,
+          marketing_opportunity_score: scoreResult.categoryScores.marketing_opportunity,
+          fit_score: scoreResult.categoryScores.fit,
+          size_score: scoreResult.categoryScores.size,
+          local_proximity_score: scoreResult.categoryScores.local_proximity,
+          prospect_score: scoreResult.prospectScore,
+          opportunity_level: scoreResult.opportunityLevel,
+          rule_version: "v1",
+          computed_at: new Date().toISOString(),
+        },
+        scoreFactors: scoreResult.factors.map((f) => ({
+          workspace_id: workspace.id,
+          company_id: id,
+          factor_key: f.factor_key,
+          factor_label: f.factor_label,
+          category: f.category,
+          points: f.points,
+          evidence: f.evidence,
+          confidence: f.confidence,
+        })),
       });
-
-      await recomputeCompanyScore(supabase, workspace.id, company.id);
-      existing.push({ ...candidate, id: company.id });
-      created++;
+      existing.push({ ...candidate, id });
     } catch {
       errors++;
       if (importJob) {
-        await supabase.from("import_errors").insert({
+        importErrorRows.push({
           import_id: importJob.id,
           row_number: processed,
           error_message: "Erro inesperado ao processar a linha.",
@@ -213,6 +307,58 @@ export async function runImportAction(formData: FormData): Promise<ImportRunResu
         });
       }
     }
+  }
+
+  // Pass 2: batched writes. Each chunk is one round trip instead of one per
+  // row — a 2000-row import now issues single-digit-to-low-tens of write
+  // requests total instead of ~20,000. company_sources/company_scores/
+  // company_score_factors are only queued for a chunk once its `companies`
+  // insert has actually succeeded, so a failed chunk can't leave orphaned
+  // rows pointing at a company_id that was never written.
+  let created = 0;
+  const succeeded: PreparedRow[] = [];
+
+  for (const batch of chunk(toInsert, INSERT_BATCH_SIZE)) {
+    const { error } = await supabase.from("companies").insert(batch.map((r) => r.company));
+    if (error) {
+      // Whole chunk failed (e.g. transient DB error) — surface as row
+      // errors rather than silently under-reporting `created`.
+      errors += batch.length;
+      if (importJob) {
+        for (const { rowNumber } of batch) {
+          importErrorRows.push({
+            import_id: importJob.id,
+            row_number: rowNumber,
+            error_message: "Falha ao gravar a empresa (lote).",
+            raw_row: {},
+          });
+        }
+      }
+    } else {
+      created += batch.length;
+      succeeded.push(...batch);
+    }
+  }
+
+  if (succeeded.length > 0) {
+    await Promise.all([
+      ...chunk(succeeded, INSERT_BATCH_SIZE).map((batch) =>
+        supabase.from("company_sources").insert(batch.map((r) => r.source))
+      ),
+      ...chunk(succeeded, INSERT_BATCH_SIZE).map((batch) =>
+        supabase.from("company_scores").insert(batch.map((r) => r.score))
+      ),
+      ...chunk(
+        succeeded.flatMap((r) => r.scoreFactors),
+        INSERT_BATCH_SIZE
+      ).map((batch) => supabase.from("company_score_factors").insert(batch)),
+    ]);
+  }
+
+  if (importErrorRows.length && importJob) {
+    await Promise.all(
+      chunk(importErrorRows, INSERT_BATCH_SIZE).map((batch) => supabase.from("import_errors").insert(batch))
+    );
   }
 
   if (importJob) {
