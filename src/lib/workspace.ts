@@ -7,9 +7,10 @@ import type { User } from "@supabase/supabase-js";
 /**
  * TEMPORARY DEV BYPASS — requested to explore the UI before a real
  * Supabase project is connected (no live auth/database yet). Set
- * NEXT_PUBLIC_REQUIRE_AUTH=true in .env.local to turn login back into a
- * hard requirement once real Supabase credentials are wired up; this must
- * be re-enabled before any real deployment (see SECURITY.md).
+ * NEXT_PUBLIC_REQUIRE_AUTH=true once real Supabase credentials are wired
+ * up (both locally in .env.local AND in Vercel's Project Settings →
+ * Environment Variables — .env.local never leaves your machine). This
+ * must be re-enabled before any real deployment (see SECURITY.md).
  */
 const REQUIRE_AUTH = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
 
@@ -58,30 +59,39 @@ const GUEST_WORKSPACE: Workspace = {
  * MVP is single-workspace-per-user (multi-workspace UI can be added later
  * without a schema change — workspace_members already supports it). Returns
  * the first workspace the current user belongs to, or null.
+ *
+ * Never throws: if Supabase isn't configured/reachable, this resolves to
+ * null (as if no workspace exists yet) instead of crashing the page — the
+ * dev bypass in requireWorkspace() below is what actually decides what to
+ * do about that.
  */
 export async function getCurrentWorkspace(): Promise<Workspace | null> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
 
-  const { data: membership } = await supabase
-    .from("workspace_members")
-    .select("workspace_id")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
+    const { data: membership } = await supabase
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .maybeSingle();
 
-  if (!membership) return null;
+    if (!membership) return null;
 
-  const { data: workspace } = await supabase
-    .from("workspaces")
-    .select("*")
-    .eq("id", membership.workspace_id)
-    .maybeSingle();
+    const { data: workspace } = await supabase
+      .from("workspaces")
+      .select("*")
+      .eq("id", membership.workspace_id)
+      .maybeSingle();
 
-  return workspace ?? null;
+    return workspace ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Use in Server Components/Actions that require an active workspace. */
@@ -93,11 +103,16 @@ export async function requireWorkspace(): Promise<Workspace> {
 }
 
 export async function requireUser(): Promise<User> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (user) return user;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) return user;
+  } catch {
+    // Supabase not configured/reachable — fall through to the bypass or
+    // the login redirect below instead of crashing the page.
+  }
   if (!REQUIRE_AUTH) return GUEST_USER;
   redirect("/login");
 }
