@@ -53,7 +53,19 @@ export async function signUpAction(
   });
 
   if (error) {
-    return { error: error.message === "User already registered" ? "E-mail já cadastrado." : "Não foi possível criar a conta." };
+    const message =
+      error.code === "user_already_exists" || error.message === "User already registered"
+        ? "E-mail já cadastrado."
+        : error.code === "email_address_invalid"
+          ? "Endereço de e-mail inválido."
+          : error.code === "weak_password"
+            ? "Senha muito fraca — use ao menos 6 caracteres, com letras e números."
+            : error.code === "over_email_send_rate_limit"
+              ? "Muitas tentativas em pouco tempo — aguarde um instante e tente de novo."
+              : // Surface the real Supabase message for anything else (misconfigured
+                // project, signups disabled, etc.) instead of a generic dead end.
+                error.message || "Não foi possível criar a conta.";
+    return { error: message };
   }
 
   redirect("/onboarding");
