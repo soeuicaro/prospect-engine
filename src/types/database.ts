@@ -703,7 +703,12 @@ export interface Database {
     Views: Record<string, never>;
     Functions: {
       create_workspace: {
-        Args: { p_name: string; p_city?: string | null; p_state?: string | null };
+        Args: {
+          p_name: string;
+          p_city?: string | null;
+          p_state?: string | null;
+          p_owner_id?: string | null;
+        };
         Returns: string;
       };
       is_workspace_member: { Args: { ws_id: string }; Returns: boolean };

@@ -5,15 +5,15 @@ import type { Database } from "@/types/database";
 /**
  * SERVICE-ROLE client. Bypasses Row Level Security entirely.
  *
+ * This app has no login/signup flow (single operator, see lib/workspace.ts)
+ * so this is now the client for *all* server-side data access, via
+ * `lib/supabase/server.ts`'s `createClient()` — not just background jobs.
+ *
  * Rules (see SECURITY.md):
  * - Import ONLY from server-only code: Route Handlers, Server Actions,
- *   background job workers.
- * - NEVER import from a Client Component, and never let this module's
- *   output reach the browser bundle (the `server-only` import enforces
- *   this at build time).
- * - Used for: workspace-crossing background jobs (score recalculation,
- *   digest emails), and the CNPJ/OSM importers which write on behalf of a
- *   verified workspace_id that the caller does not control directly.
+ *   background job workers. Never import from a Client Component, and never
+ *   let this module's output reach the browser bundle (the `server-only`
+ *   import enforces this at build time).
  * - Every write through this client MUST explicitly filter/set
  *   workspace_id itself, since RLS will not do it for you.
  */

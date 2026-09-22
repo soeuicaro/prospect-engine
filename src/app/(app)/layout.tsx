@@ -3,6 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 
+// Every page under here reads live, per-request data (companies, campaigns,
+// dashboard counts, ...) through the service-role client, which no longer
+// touches `cookies()`/`headers()` — the dynamic APIs Next used to detect
+// automatically to keep these routes off static generation. Without this,
+// `next build` would prerender them once and serve stale data forever.
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // requireUser()/requireWorkspace() share a single, per-request-memoized
   // auth.getUser() call (see lib/workspace.ts), so running them concurrently

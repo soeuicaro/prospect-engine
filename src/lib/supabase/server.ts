@@ -1,32 +1,20 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
-import type { Database } from "@/types/database";
-import { getSupabasePublicEnv } from "./env";
+import "server-only";
+import { createAdminClient } from "./admin";
 
 /**
- * Server Supabase client for Server Components, Server Actions and Route
- * Handlers. Uses the anon key + the caller's session cookie — RLS still
- * applies. This is the client that ~99% of server code should use.
+ * This app is single-user and session-less by design (no login/signup flow
+ * — see lib/workspace.ts). There is no Supabase Auth session to bind a
+ * request-scoped client to, so every server-side caller gets the
+ * service-role client instead. `createClient()` is kept as the import
+ * every Server Component/Action/query already uses, so nothing else in the
+ * app had to change — only what it returns did.
+ *
+ * This intentionally bypasses Row Level Security everywhere, which is fine
+ * here: there's exactly one workspace and one operator with access to the
+ * server at all. RLS policies (`supabase/migrations/0007_rls.sql`) are still
+ * in the schema but effectively unused now — they'd only matter again if
+ * this app ever grows a real multi-user login flow.
  */
 export async function createClient() {
-  const cookieStore = await cookies();
-  const { url, anonKey } = getSupabasePublicEnv();
-
-  return createServerClient<Database>(url, anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        } catch {
-          // Called from a Server Component with no response to write to.
-          // Safe to ignore: proxy.ts refreshes the session on every request.
-        }
-      },
-    },
-  });
+  return createAdminClient();
 }

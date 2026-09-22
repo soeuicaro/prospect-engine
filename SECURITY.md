@@ -1,16 +1,20 @@
 # Security
 
+## No login — single-user by design
+
+This app has no login/signup flow at all (deliberately removed — it's only ever run by one operator). There is no session, no password, no `NEXT_PUBLIC_REQUIRE_AUTH` flag anymore. **Do not deploy this anywhere reachable by anyone but you** unless you add real authentication back — anyone who can reach the deployed URL has full access, full stop. The `(app)` route group has no gate beyond `requireWorkspace()`/`requireUser()` (`lib/workspace.ts`) redirecting to `/onboarding` when the one workspace doesn't exist yet — that's a setup-flow redirect, not an authorization check.
+
 ## Row Level Security
 
-Every tenant table has RLS enabled with a policy requiring `is_workspace_member(workspace_id)` — see `DATABASE.md` and `supabase/migrations/0007_rls.sql`. This is enforced by Postgres itself, not by application code, so an IDOR bug in a Server Action cannot leak cross-workspace data as long as the request goes through the anon-key client with the user's session.
+Every tenant table still has RLS enabled with a policy requiring `is_workspace_member(workspace_id)` — see `DATABASE.md` and `supabase/migrations/0007_rls.sql`. **This is no longer the app's enforcement boundary.** The app has no login flow (single operator by design — see `lib/workspace.ts`), so every request goes through the service-role client, which bypasses RLS entirely. The policies are left in the schema (harmless, and they'd matter again if this app ever grows a real multi-user login), but the actual security boundary today is: only someone with access to the deployed server / the Supabase project itself can touch the data.
 
 ## Service-role key
 
-`SUPABASE_SERVICE_ROLE_KEY` bypasses RLS entirely.
+`SUPABASE_SERVICE_ROLE_KEY` bypasses RLS entirely, and is now the key every server-side request uses (not just background jobs).
 
-- Lives only in `lib/supabase/admin.ts`, guarded by the `server-only` import (build fails if this module is ever imported from client code).
-- Not currently used by any Server Action in this codebase — every write goes through the RLS-bound client (`lib/supabase/server.ts`) using the caller's own session. The admin client exists for future background-job workers that legitimately need to write across workspace boundaries (e.g. a scheduled digest), and is intentionally unused until that exists, rather than wired in "just in case."
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` is safe to expose (RLS protects it); `SUPABASE_SERVICE_ROLE_KEY` must never get a `NEXT_PUBLIC_` prefix.
+- Constructed only in `lib/supabase/admin.ts`, guarded by the `server-only` import (build fails if this module is ever imported from client code). `lib/supabase/server.ts`'s `createClient()` — the function every Server Component/Action/query calls — just returns this client.
+- Since there's no more RLS enforcement in the request path, every write in `lib/actions/*.ts` MUST keep explicitly filtering/setting `workspace_id` itself — RLS will not do it for you, and now nothing else will either.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` is no longer used anywhere in the app (no anon-key client exists); it's harmless to leave in `.env.local` but can be removed. `SUPABASE_SERVICE_ROLE_KEY` must never get a `NEXT_PUBLIC_` prefix — it is meaningfully more sensitive now that it's the app's only Supabase credential.
 
 ## Secrets
 
@@ -21,14 +25,10 @@ Every tenant table has RLS enabled with a policy requiring `is_workspace_member(
 
 All Server Action inputs are parsed with Zod (`lib/validations/*`) before touching the database. Native `<select>`/checkbox form fields are used (not Radix-only components) specifically so `FormData` actually carries the value server-side — see the `NativeSelect` component comment.
 
-## ⚠️ Auth bypass currently active in this environment
-
-`NEXT_PUBLIC_REQUIRE_AUTH=false` in `.env.local` (temporary, requested to explore the UI before a Supabase project was connected — see `ENVIRONMENT.md`). While this is off, `requireUser()`/`requireWorkspace()` (`lib/workspace.ts`) and `proxy.ts` do not enforce login at all. **This must be set to `true` before deploying anywhere reachable by anyone but you.**
-
 ## Authorization boundaries
 
-- `requireUser()` / `requireWorkspace()` (`lib/workspace.ts`) gate every page in the `(app)` route group and every Server Action that touches workspace data.
-- `proxy.ts` (Next.js 16's renamed `middleware.ts`) refreshes the Supabase session and redirects unauthenticated requests away from protected routes at the edge of the app, as a second layer — but Server Actions do not rely on `proxy.ts` alone (a matcher change could silently stop covering a route); each action re-checks via `requireWorkspace()`/`requireUser()`.
+- `requireUser()` / `requireWorkspace()` (`lib/workspace.ts`) resolve the one fixed owner/workspace and redirect to `/onboarding` if the workspace hasn't been created yet. They are not an access-control gate (see above).
+- Every Server Action in `lib/actions/*.ts` still explicitly scopes its queries/writes to `workspace_id` — that discipline is kept even though RLS/auth no longer enforces it, since it's the only thing preventing cross-workspace data mixing if this ever becomes multi-workspace again.
 
 ## Known dependency decision
 
@@ -36,11 +36,11 @@ All Server Action inputs are parsed with Zod (`lib/validations/*`) before touchi
 
 ## Security checklist (re-verify before calling this "production ready")
 
-- [x] RLS enabled + policy-tested-by-inspection on every tenant table
-- [x] Service-role key never imported outside `lib/supabase/admin.ts`
+- [x] RLS policies still defined on every tenant table (inert while the service-role client is used — see "No login" above)
+- [x] Service-role key only constructed in `lib/supabase/admin.ts`, never imported from client code
 - [x] Zod validation on every Server Action input
 - [x] `npm audit` clean
-- [ ] RLS policies exercised by an automated integration test against a real Supabase project (not yet — no live project connected in this environment; see `TESTING.md`)
+- [ ] Real authentication before this is ever deployed somewhere reachable by anyone but the one operator
 - [ ] Rate limiting on Server Actions (OSM discovery has a documented best-effort limitation only — see `ARCHITECTURE.md`)
 - [ ] Security headers (CSP, etc.) configured at the Vercel/Next.js config level (not yet set)
 - [ ] Dependency/secret scanning wired into CI

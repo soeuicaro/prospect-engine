@@ -1,19 +1,14 @@
 "use client";
 
-import { useTransition } from "react";
 import { usePathname } from "next/navigation";
-import { LogOut } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { signOutAction } from "@/app/(auth)/actions";
+import { Button } from "@/components/ui/button";
 import { NAV_ITEMS } from "./sidebar";
 
 function initials(name: string) {
@@ -24,7 +19,6 @@ function initials(name: string) {
 }
 
 export function Topbar({ userName, userEmail }: { userName: string; userEmail: string }) {
-  const [pending, startTransition] = useTransition();
   const pathname = usePathname();
 
   const currentPage = NAV_ITEMS.find(
@@ -52,14 +46,6 @@ export function Topbar({ userName, userEmail }: { userName: string; userEmail: s
           <DropdownMenuLabel className="truncate font-normal text-muted-foreground">
             {userEmail}
           </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            disabled={pending}
-            onClick={() => startTransition(() => signOutAction())}
-          >
-            <LogOut className="mr-2 h-4 w-4" />
-            Sair
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </header>

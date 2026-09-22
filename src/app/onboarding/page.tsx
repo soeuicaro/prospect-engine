@@ -3,6 +3,10 @@ import { requireUser } from "@/lib/workspace";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { OnboardingForm } from "./onboarding-form";
 
+// See the (app) layout's identical export — this route sits outside that
+// layout, so it needs its own.
+export const dynamic = "force-dynamic";
+
 export default async function OnboardingPage() {
   await requireUser();
   const workspace = await getCurrentWorkspace();

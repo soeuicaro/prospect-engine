@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/workspace";
 import { workspaceCreateSchema } from "@/lib/validations/workspace";
 
 export interface OnboardingState {
@@ -22,11 +23,13 @@ export async function createWorkspaceAction(
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
   }
 
+  const user = await requireUser();
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("create_workspace", {
     p_name: parsed.data.name,
     p_city: parsed.data.city || null,
     p_state: parsed.data.state ? parsed.data.state.toUpperCase() : null,
+    p_owner_id: user.id,
   });
 
   if (error || !data) {

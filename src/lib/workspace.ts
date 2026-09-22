@@ -3,131 +3,65 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { Workspace } from "@/types/database";
-import type { User } from "@supabase/supabase-js";
 
 /**
- * TEMPORARY DEV BYPASS — requested to explore the UI before a real
- * Supabase project is connected (no live auth/database yet). Set
- * NEXT_PUBLIC_REQUIRE_AUTH=true once real Supabase credentials are wired
- * up (both locally in .env.local AND in Vercel's Project Settings →
- * Environment Variables — .env.local never leaves your machine). This
- * must be re-enabled before any real deployment (see SECURITY.md).
+ * This app is single-user by design (see the user's own decision — no
+ * login/signup flow, only ever run by one operator) and every server call
+ * already goes through the service-role client (lib/supabase/server.ts),
+ * which has no Supabase Auth session/JWT at all. There is exactly one real
+ * row in `profiles` (the one account created before this was simplified);
+ * that's "the user" everywhere in the app now. Only `id`/`email` are used
+ * anywhere (Topbar display, `created_by`/`author_id`/etc. FK columns), so
+ * this doesn't need the full `@supabase/supabase-js` `User` shape.
  */
-const REQUIRE_AUTH = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
-
-const GUEST_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000";
-
-const GUEST_USER = {
-  id: GUEST_WORKSPACE_ID,
-  email: "guest@local",
-  app_metadata: {},
-  user_metadata: {},
-  aud: "guest",
-  created_at: new Date().toISOString(),
-} as unknown as User;
-
-const GUEST_WORKSPACE: Workspace = {
-  id: GUEST_WORKSPACE_ID,
-  name: "Guest Workspace (sem Supabase conectado)",
-  slug: null,
-  city: null,
-  state: null,
-  logo_url: null,
-  signature: null,
-  tone_of_voice: "consultivo",
-  business_profile: {},
-  cost_mode: "FREE_ONLY",
-  feature_flags: {
-    MAPS_LINKS: true,
-    WEB_ANALYSIS: true,
-    OSM_DISCOVERY: true,
-    CNPJ_IMPORT: true,
-    EMAIL_ASSIST: true,
-    WHATSAPP_ASSIST: true,
-    AI_DISABLED: true,
-    LOCAL_AI: false,
-    ADVANCED_AUTOMATION: false,
-  },
-  contact_limits: { max_contacts_per_day: 40, max_new_contacts_per_day: 20, max_followups_per_day: 30 },
-  data_retention: {},
-  created_by: null,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-  deleted_at: null,
-};
+export interface AppUser {
+  id: string;
+  email: string;
+}
 
 /**
- * `supabase.auth.getUser()` is a network round-trip to the Supabase Auth
- * server (it validates the JWT server-side, it doesn't just decode the
- * cookie). The layout and every page each ask "who is the user?" and "what
- * is their workspace?" independently, which used to mean 2-3 of these
- * round-trips, sequentially, before a single byte of the page could render.
- * `cache()` memoizes this per request (per React render pass), so no matter
- * how many times requireUser()/requireWorkspace() are called while
- * rendering one route, the Auth server is only hit once.
+ * `getUser()`/`getWorkspace()` are called from the layout and from every
+ * page/action that needs them. `cache()` memoizes each per request (per
+ * React render pass) so hitting the DB for "who's the owner"/"what's the
+ * workspace" multiple times during one request only costs one round trip
+ * each, however many call sites ask for it.
  */
-const getAuthUser = cache(async (): Promise<User | null> => {
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    return user;
-  } catch {
-    // Supabase not configured/reachable — treat as signed out instead of
-    // crashing the page.
-    return null;
-  }
+const getOwnerUser = cache(async (): Promise<AppUser | null> => {
+  const supabase = await createClient();
+  const { data } = await supabase.from("profiles").select("id, email").limit(1).maybeSingle();
+  if (!data) return null;
+  return { id: data.id, email: data.email ?? "" };
 });
 
 /**
- * MVP is single-workspace-per-user (multi-workspace UI can be added later
- * without a schema change — workspace_members already supports it). Returns
- * the first workspace the current user belongs to, or null.
- *
- * Never throws: if Supabase isn't configured/reachable, this resolves to
- * null (as if no workspace exists yet) instead of crashing the page — the
- * dev bypass in requireWorkspace() below is what actually decides what to
- * do about that. Memoized per request via cache() — see getAuthUser() above.
+ * Single-workspace app: returns the one workspace that exists, or null
+ * before onboarding has created it yet.
  */
 export const getCurrentWorkspace = cache(async (): Promise<Workspace | null> => {
-  try {
-    const user = await getAuthUser();
-    if (!user) return null;
-
-    const supabase = await createClient();
-    const { data: membership } = await supabase
-      .from("workspace_members")
-      .select("workspace_id")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-
-    if (!membership) return null;
-
-    const { data: workspace } = await supabase
-      .from("workspaces")
-      .select("*")
-      .eq("id", membership.workspace_id)
-      .maybeSingle();
-
-    return workspace ?? null;
-  } catch {
-    return null;
-  }
+  const supabase = await createClient();
+  const { data } = await supabase.from("workspaces").select("*").limit(1).maybeSingle();
+  return data ?? null;
 });
 
 /** Use in Server Components/Actions that require an active workspace. */
 export async function requireWorkspace(): Promise<Workspace> {
   const workspace = await getCurrentWorkspace();
   if (workspace) return workspace;
-  if (!REQUIRE_AUTH) return GUEST_WORKSPACE;
   redirect("/onboarding");
 }
 
-export async function requireUser(): Promise<User> {
-  const user = await getAuthUser();
+/**
+ * Use in Server Components/Actions that need "the current user" (really:
+ * the one fixed owner) — mainly for `created_by`/`author_id`-style columns
+ * and the Topbar's name/email display.
+ */
+export async function requireUser(): Promise<AppUser> {
+  const user = await getOwnerUser();
   if (user) return user;
-  if (!REQUIRE_AUTH) return GUEST_USER;
-  redirect("/login");
+  // No `profiles` row exists yet — nothing has ever signed up. Onboarding
+  // needs an owner id to pass to create_workspace(); without one there's
+  // nothing this app can do.
+  throw new Error(
+    "No owner account found in `profiles`. This app expects exactly one row there — see supabase/migrations/0001_core.sql."
+  );
 }
