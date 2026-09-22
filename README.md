@@ -10,7 +10,7 @@ See `PROMPT_MASTER` context in project history for the full product spec this wa
 
 Working end-to-end today:
 
-- Auth (Supabase Auth) + workspace onboarding (multi-tenant, RLS-isolated)
+- Single-user, no login — the one workspace auto-creates itself on first run (see `SECURITY.md`)
 - Companies: create, list with filters/search/pagination/bulk actions, detailed lead page
 - Prospect Score engine (configurable weights/rules per workspace) with a transparent "Why this lead?" evidence trail
 - Decision-maker intelligence with confidence levels (never fabricated)

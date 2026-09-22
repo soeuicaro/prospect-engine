@@ -1,6 +1,5 @@
 import "server-only";
 import { cache } from "react";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { Workspace } from "@/types/database";
 
@@ -25,14 +24,6 @@ export interface AppUser {
  * request (per React render pass) so hitting the DB for "who's the
  * owner"/"what's the workspace" multiple times during one request only
  * costs one round trip each, however many call sites ask for it.
- *
- * Returns null both when no `profiles` row exists yet AND when Supabase
- * itself is unreachable/unconfigured (`lib/supabase/admin.ts` fails soft,
- * not throws, so a query against a missing/wrong env var resolves to
- * `{data: null}` here rather than rejecting) — exported directly (not just
- * through `requireUser()`) for `onboarding/actions.ts`, which needs to tell
- * those two cases apart from a normal caller's-page form error rather than
- * a redirect.
  */
 export const getOwnerUser = cache(async (): Promise<AppUser | null> => {
   const supabase = await createClient();
@@ -41,39 +32,69 @@ export const getOwnerUser = cache(async (): Promise<AppUser | null> => {
   return { id: data.id, email: data.email ?? "" };
 });
 
-/**
- * Single-workspace app: returns the one workspace that exists, or null
- * before onboarding has created it yet.
- */
+/** Single-workspace app: returns the one workspace that exists, or null before it's been created yet. */
 export const getCurrentWorkspace = cache(async (): Promise<Workspace | null> => {
   const supabase = await createClient();
   const { data } = await supabase.from("workspaces").select("*").limit(1).maybeSingle();
   return data ?? null;
 });
 
-/** Use in Server Components/Actions that require an active workspace. */
-export async function requireWorkspace(): Promise<Workspace> {
-  const workspace = await getCurrentWorkspace();
-  if (workspace) return workspace;
-  redirect("/onboarding");
-}
-
 /**
  * Use in Server Components/Actions that need "the current user" (really:
  * the one fixed owner) — mainly for `created_by`/`author_id`-style columns
  * and the Topbar's name/email display.
  *
- * Redirects to `/onboarding` instead of throwing when no owner can be
- * resolved (same shape as `requireWorkspace()`) — this can't be told apart
- * from "Supabase isn't reachable right now" (see `getOwnerUser()`), and a
- * throw here would crash every single page the moment that's true, exactly
- * the failure mode `lib/supabase/admin.ts` was fixed to fail soft against.
- * `onboarding/actions.ts` calls `getOwnerUser()` directly instead, since a
- * silent bounce back to the same page it's already on would hide the error
- * rather than show it.
+ * Throws if no owner can be resolved — this genuinely can't be recovered
+ * from (there used to be a manual "create your account" step to fall back
+ * to; there isn't one anymore, on purpose — see `requireWorkspace()`), so
+ * it surfaces as the app's error.tsx screen instead of silently degrading.
  */
 export async function requireUser(): Promise<AppUser> {
   const user = await getOwnerUser();
   if (user) return user;
-  redirect("/onboarding");
+  throw new Error(
+    "Nenhuma conta encontrada em `profiles`, ou não foi possível falar com o Supabase. " +
+      "Confira NEXT_PUBLIC_SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY (ENVIRONMENT.md)."
+  );
+}
+
+/**
+ * Use in Server Components/Actions that require an active workspace.
+ *
+ * There's no onboarding screen — this app is single-workspace, single-user,
+ * so the first request that doesn't find a workspace just creates one
+ * (via the `create_workspace()` RPC, same one an onboarding form used to
+ * call) with a placeholder name, and every request after that finds it.
+ * Rename it — and set city/state — from Configurações whenever.
+ */
+export async function requireWorkspace(): Promise<Workspace> {
+  const existing = await getCurrentWorkspace();
+  if (existing) return existing;
+
+  const owner = await requireUser();
+  const supabase = await createClient();
+  const { data: workspaceId, error } = await supabase.rpc("create_workspace", {
+    p_name: "Meu Workspace",
+    p_owner_id: owner.id,
+  });
+
+  if (error || !workspaceId) {
+    throw new Error(
+      `Não foi possível criar o workspace automaticamente${error ? `: ${error.message}` : ""}.`
+    );
+  }
+
+  // Not `getCurrentWorkspace()` again — it's `cache()`-memoized per request
+  // and already resolved to null above in this same render pass.
+  const { data: workspace } = await supabase
+    .from("workspaces")
+    .select("*")
+    .eq("id", workspaceId)
+    .single();
+
+  if (!workspace) {
+    throw new Error("Workspace criado, mas não encontrado logo em seguida — recarregue a página.");
+  }
+
+  return workspace;
 }

@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Visit `http://localhost:3000` — it goes straight to onboarding (no login) and creates your workspace there, seeding pipeline stages, scoring weights, starter offers/templates/playbooks via the `create_workspace()` Postgres function (`supabase/migrations/0006_workspace_bootstrap.sql`, updated in `0009_single_user_bootstrap.sql` to take an explicit owner id instead of a session).
+Visit `http://localhost:3000` — no login, no onboarding form: it goes straight to the dashboard. The first request auto-creates the one workspace behind the scenes (`requireWorkspace()` in `lib/workspace.ts`), seeding pipeline stages, scoring weights, starter offers/templates/playbooks via the `create_workspace()` Postgres function (`supabase/migrations/0006_workspace_bootstrap.sql`, updated in `0009_single_user_bootstrap.sql` to take an explicit owner id instead of a session). Rename it and set its city/state from Configurações whenever.
 
 ## 4. Vercel
 
@@ -31,7 +31,7 @@ Visit `http://localhost:3000` — it goes straight to onboarding (no login) and 
 
 ## 5. Post-deploy checklist
 
-- [ ] Visit the production URL and confirm onboarding/workspace creation works (exercises the DB connection + `create_workspace()` RPC end-to-end)
+- [ ] Visit the production URL and confirm it reaches the dashboard (exercises the DB connection + the auto-created-workspace `create_workspace()` RPC end-to-end)
 - [ ] Set `NEXT_PUBLIC_SUPABASE_URL` only client-side (never expose `SUPABASE_SERVICE_ROLE_KEY` — it is intentionally never referenced from any `"use client"` file)
 - [ ] Re-check current Supabase/Vercel free-tier limits against `FREE_PLAN.md` before high-volume use
 

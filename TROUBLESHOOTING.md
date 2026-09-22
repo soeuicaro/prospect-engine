@@ -24,9 +24,9 @@ Check if it's the known `xlsx` (SheetJS) issue before doing anything else — se
 
 `.env.local` almost certainly has placeholder values (`NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co`, etc., used only to satisfy the build in an environment with no live project). Fill in real values from a Supabase project — see `DEPLOYMENT.md` §1-2 and `ENVIRONMENT.md`.
 
-## `create_workspace()` RPC fails / onboarding form errors
+## Dashboard shows the error.tsx screen instead of loading ("could not create workspace")
 
-Confirm all migrations ran in order (`0001` through `0008`) — `create_workspace()` (defined in `0006`) references `industries` rows seeded in `0008`, and `scoring_category_weights`/`pipeline_stages` tables from `0002`. If migrations were run out of order, drop and recreate the project rather than trying to patch mid-sequence.
+`requireWorkspace()` (`lib/workspace.ts`) auto-creates the one workspace via `create_workspace()` the first time it's needed — no onboarding form anymore. Confirm all migrations ran in order (`0001` through the latest `000N`) — `create_workspace()` (defined in `0006`, updated in `0009` to not need a session) references `industries` rows seeded in `0008`, and `scoring_category_weights`/`pipeline_stages` tables from `0002`. If migrations were run out of order, drop and recreate the project rather than trying to patch mid-sequence.
 
 ## CSV import silently skips rows
 

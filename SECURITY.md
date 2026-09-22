@@ -2,7 +2,7 @@
 
 ## No login — single-user by design
 
-This app has no login/signup flow at all (deliberately removed — it's only ever run by one operator). There is no session, no password, no `NEXT_PUBLIC_REQUIRE_AUTH` flag anymore. **Do not deploy this anywhere reachable by anyone but you** unless you add real authentication back — anyone who can reach the deployed URL has full access, full stop. The `(app)` route group has no gate beyond `requireWorkspace()`/`requireUser()` (`lib/workspace.ts`) redirecting to `/onboarding` when the one workspace doesn't exist yet — that's a setup-flow redirect, not an authorization check.
+This app has no login/signup flow at all (deliberately removed — it's only ever run by one operator), and no onboarding form either — `requireWorkspace()` (`lib/workspace.ts`) auto-creates the one workspace on the first request that doesn't find it. There is no session, no password, no `NEXT_PUBLIC_REQUIRE_AUTH` flag anymore. **Do not deploy this anywhere reachable by anyone but you** unless you add real authentication back — anyone who can reach the deployed URL has full access, full stop. The `(app)` route group has no gate at all beyond that auto-create.
 
 ## Row Level Security
 
@@ -27,7 +27,7 @@ All Server Action inputs are parsed with Zod (`lib/validations/*`) before touchi
 
 ## Authorization boundaries
 
-- `requireUser()` / `requireWorkspace()` (`lib/workspace.ts`) resolve the one fixed owner/workspace and redirect to `/onboarding` if the workspace hasn't been created yet. They are not an access-control gate (see above).
+- `requireUser()` / `requireWorkspace()` (`lib/workspace.ts`) resolve the one fixed owner/workspace, auto-creating the workspace the first time it's needed. They are not an access-control gate (see above).
 - Every Server Action in `lib/actions/*.ts` still explicitly scopes its queries/writes to `workspace_id` — that discipline is kept even though RLS/auth no longer enforces it, since it's the only thing preventing cross-workspace data mixing if this ever becomes multi-workspace again.
 
 ## Known dependency decision
