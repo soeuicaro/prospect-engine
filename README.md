@@ -60,7 +60,7 @@ Then sign up, create a workspace (seeds your pipeline stages, scoring weights, s
 | `SECURITY.md` | RLS, service-role handling, checklist |
 | `DATA_SOURCES.md` | Every external data source and its terms |
 | `CNPJ_IMPORT.md` | How to get and import Receita Federal data |
-| `MAPS_USAGE.md` | Exactly what we do and don't do with Google Maps |
+| `MAPS.md` | Exactly what we do and don't do with Google Maps |
 | `DEPLOYMENT.md` | Supabase + Vercel setup |
 | `FREE_PLAN.md` | Zero-cost architecture and current plan limits |
 | `TESTING.md` | What's tested and how to run it |

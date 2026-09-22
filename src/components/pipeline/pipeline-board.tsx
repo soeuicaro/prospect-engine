@@ -5,6 +5,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreBadge } from "@/components/shared/badges";
+import { ContactActions } from "@/components/shared/contact-actions";
 import { changeStageAction } from "@/lib/actions/companies";
 import type { PipelineCard } from "@/lib/queries/pipeline";
 
@@ -70,6 +71,25 @@ export function PipelineBoard({ stages, initialCards }: { stages: Stage[]; initi
                       {[card.city, card.state].filter(Boolean).join("/")}
                     </span>
                     <ScoreBadge score={card.prospect_score} />
+                  </CardContent>
+                  <CardContent className="pb-3 pt-0">
+                    <ContactActions
+                      compact
+                      target={{
+                        name: card.trade_name,
+                        legalName: card.legal_name,
+                        street: card.street,
+                        houseNumber: card.street_number,
+                        city: card.city,
+                        state: card.state,
+                        lat: card.latitude,
+                        lon: card.longitude,
+                        website: card.website,
+                        phone: card.phone,
+                        whatsapp: card.whatsapp,
+                        email: card.email,
+                      }}
+                    />
                   </CardContent>
                 </Card>
               ))}

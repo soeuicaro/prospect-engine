@@ -66,6 +66,13 @@ export async function requireUser(): Promise<AppUser> {
  * (via the `create_workspace()` RPC, same one an onboarding form used to
  * call) with a placeholder name, and every request after that finds it.
  * Rename it — and set city/state — from Configurações whenever.
+ *
+ * Two concurrent "first" requests (e.g. the sidebar prefetching several
+ * routes at once) can both see no workspace yet and both try to create
+ * one — this actually happened once and produced two rows. A unique index
+ * (`0010_workspace_singleton.sql`) now makes the database reject the
+ * second `INSERT`; the losing request below just re-fetches what the
+ * winner created instead of treating that as a real failure.
  */
 export async function requireWorkspace(): Promise<Workspace> {
   const existing = await getCurrentWorkspace();
@@ -77,6 +84,11 @@ export async function requireWorkspace(): Promise<Workspace> {
     p_name: "Meu Workspace",
     p_owner_id: owner.id,
   });
+
+  if (error?.code === "23505") {
+    const { data: workspace } = await supabase.from("workspaces").select("*").limit(1).maybeSingle();
+    if (workspace) return workspace;
+  }
 
   if (error || !workspaceId) {
     throw new Error(

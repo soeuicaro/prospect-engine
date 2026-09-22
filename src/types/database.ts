@@ -251,8 +251,11 @@ export type Company = {
   website: string | null;
   website_domain: string | null;
   whatsapp: string | null;
-  maps_validation_status: "NOT_VALIDATED" | "VALIDATED_BY_USER" | "DISCREPANCY_FOUND";
+  maps_validation_status: "NOT_VALIDATED" | "FOUND" | "NOT_FOUND" | "WRONG_RESULT" | "DUPLICATE" | "NEEDS_REVIEW";
   maps_last_validated_at: string | null;
+  maps_validation_note: string | null;
+  field_provenance: Record<string, { value: string; source: string; confidence: Confidence; collected_at: string; verified_at?: string | null }>;
+  data_conflicts: { field: string; chosen: { value: string; source: string }; alternatives: { value: string; source: string; collected_at?: string }[] }[];
   data_quality_score: number;
   last_verified_at: string | null;
   pipeline_stage_id: string | null;
@@ -583,6 +586,89 @@ export type AutomationJob = {
   completed_at: string | null;
 }
 
+export type DiscoverySearchRow = {
+  id: string;
+  workspace_id: string;
+  cache_key: string;
+  name: string | null;
+  saved: boolean;
+  query_text: string | null;
+  context: Record<string, unknown>;
+  status: "QUEUED" | "SEARCHING" | "MERGING" | "ENRICHING" | "SCORING" | "COMPLETED" | "PARTIAL" | "FAILED" | "CANCELLED";
+  outcome: "SUCCESS" | "SUCCESS_WITH_WARNINGS" | "PARTIAL" | "NO_RESULTS" | "FAILED" | null;
+  sources_used: string[];
+  sources_failed: string[];
+  counts: Record<string, number>;
+  summary: Record<string, number>;
+  funnel: unknown[];
+  source_runs: unknown[];
+  diagnostics: Record<string, unknown>;
+  results: unknown[];
+  final_count: number;
+  quality_score: number | null;
+  duration_ms: number | null;
+  error: string | null;
+  created_by: string | null;
+  created_at: string;
+  completed_at: string | null;
+  expires_at: string | null;
+}
+
+export type SourceHealthRow = {
+  workspace_id: string;
+  source_key: string;
+  breaker_state: "CLOSED" | "OPEN" | "HALF_OPEN";
+  consecutive_failures: number;
+  opened_at: string | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  last_error_kind: string | null;
+  last_status: string | null;
+  last_latency_ms: number | null;
+  avg_latency_ms: number | null;
+  success_count: number;
+  failure_count: number;
+  recent_outcomes: boolean[];
+  total_results: number;
+  runs: number;
+  last_checked_at: string | null;
+  updated_at: string;
+}
+
+export type SourceRequestLogRow = {
+  id: string;
+  workspace_id: string;
+  search_id: string | null;
+  source_key: string;
+  endpoint: string | null;
+  query: string | null;
+  http_status: number | null;
+  latency_ms: number | null;
+  attempt: number | null;
+  max_attempts: number | null;
+  error_kind: string | null;
+  error_message: string | null;
+  results_count: number | null;
+  fallback_activated: boolean;
+  created_at: string;
+}
+
+export type GeocodeCacheRow = {
+  cache_key: string;
+  result: Record<string, unknown>;
+  source: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export type SettingRow = {
+  workspace_id: string;
+  key: string;
+  value: Record<string, unknown>;
+  updated_at: string;
+}
+
 export type AuditLog = {
   id: string;
   workspace_id: string;
@@ -640,6 +726,7 @@ export interface Database {
       workspace_members: Table<WorkspaceMember>;
       cnaes: Table<Cnae>;
       industries: Table<Industry>;
+      industry_cnaes: Table<{ industry_id: string; cnae_code: string }>;
       pipeline_stages: Table<PipelineStage>;
       scoring_rules: Table<ScoringRule>;
       scoring_category_weights: Table<ScoringCategoryWeight>;
@@ -699,6 +786,11 @@ export interface Database {
       import_errors: Table<ImportError, [Fk<"import_errors_import_id_fkey", ["import_id"], "imports">]>;
       automation_jobs: Table<AutomationJob>;
       audit_logs: Table<AuditLog>;
+      discovery_searches: Table<DiscoverySearchRow>;
+      source_health: Table<SourceHealthRow>;
+      source_request_logs: Table<SourceRequestLogRow, [Fk<"source_request_logs_search_id_fkey", ["search_id"], "discovery_searches">]>;
+      geocode_cache: Table<GeocodeCacheRow>;
+      settings: Table<SettingRow>;
     };
     Views: Record<string, never>;
     Functions: {

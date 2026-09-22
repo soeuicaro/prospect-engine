@@ -26,6 +26,17 @@ export interface CompanyListRow {
   website: string | null;
   phone: string | null;
   whatsapp: string | null;
+  email: string | null;
+  cnpj: string | null;
+  street: string | null;
+  street_number: string | null;
+  neighborhood: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  maps_validation_status: string;
+  source_types: string[];
+  socials: Partial<Record<"instagram" | "facebook" | "tiktok" | "linkedin" | "youtube", string>>;
+  has_decision_maker: boolean;
   next_best_action: string | null;
   created_at: string;
   industry_name: string | null;
@@ -45,9 +56,11 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
   let query = supabase
     .from("companies")
     .select(
-      `id, trade_name, legal_name, city, state, estimated_size, website, phone, whatsapp,
+      `id, trade_name, legal_name, city, state, estimated_size, website, phone, whatsapp, email, cnpj,
+       street, street_number, neighborhood, latitude, longitude, maps_validation_status,
        next_best_action, created_at,
-       industries(name), pipeline_stages(label, color), company_scores(prospect_score, opportunity_level)`,
+       industries(name), pipeline_stages(label, color), company_scores(prospect_score, opportunity_level),
+       company_sources(source_type), company_social_profiles(channel, handle_or_url, status), company_contacts(contact_type)`,
       { count: "exact" }
     )
     .eq("workspace_id", workspaceId)
@@ -96,6 +109,17 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
     website: string | null;
     phone: string | null;
     whatsapp: string | null;
+    email: string | null;
+    cnpj: string | null;
+    street: string | null;
+    street_number: string | null;
+    neighborhood: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    maps_validation_status: string;
+    company_sources: { source_type: string }[] | null;
+    company_social_profiles: { channel: string; handle_or_url: string | null; status: string }[] | null;
+    company_contacts: { contact_type: string }[] | null;
     next_best_action: string | null;
     created_at: string;
     industries: { name: string } | { name: string }[] | null;
@@ -106,7 +130,7 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
       | null;
   };
 
-  const rows: CompanyListRow[] = ((data ?? []) as Row[]).map((row) => {
+  const rows: CompanyListRow[] = ((data ?? []) as unknown as Row[]).map((row) => {
     const industry = Array.isArray(row.industries) ? row.industries[0] : row.industries;
     const stage = Array.isArray(row.pipeline_stages) ? row.pipeline_stages[0] : row.pipeline_stages;
     const score = Array.isArray(row.company_scores) ? row.company_scores[0] : row.company_scores;
@@ -120,6 +144,21 @@ export async function listCompanies(workspaceId: string, filters: CompanyListFil
       website: row.website,
       phone: row.phone,
       whatsapp: row.whatsapp,
+      email: row.email,
+      cnpj: row.cnpj,
+      street: row.street,
+      street_number: row.street_number,
+      neighborhood: row.neighborhood,
+      latitude: row.latitude !== null ? Number(row.latitude) : null,
+      longitude: row.longitude !== null ? Number(row.longitude) : null,
+      maps_validation_status: row.maps_validation_status,
+      source_types: [...new Set((row.company_sources ?? []).map((s) => s.source_type))],
+      socials: Object.fromEntries(
+        (row.company_social_profiles ?? [])
+          .filter((s) => s.status === "FOUND" && s.handle_or_url && ["instagram", "facebook", "tiktok", "linkedin", "youtube"].includes(s.channel))
+          .map((s) => [s.channel, s.handle_or_url as string])
+      ),
+      has_decision_maker: (row.company_contacts ?? []).some((c) => ["SOCIO", "DECISOR_ESTIMADO", "RESPONSAVEL_CADASTRAL"].includes(c.contact_type)),
       next_best_action: row.next_best_action,
       created_at: row.created_at,
       industry_name: industry?.name ?? null,

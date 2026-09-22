@@ -16,6 +16,7 @@ import { normalizePhoneBR, normalizeEmail } from "@/lib/domain/phone";
 import { findBestDedupMatch, type DedupCandidate } from "@/lib/domain/dedup";
 import { recomputeCompanyScore } from "@/lib/actions/scoring";
 import { logAudit } from "@/lib/actions/audit";
+import { MAPS_VALIDATION_STATUSES, type MapsValidationStatus } from "@/lib/domain/maps";
 
 export interface ActionState {
   error?: string;
@@ -375,21 +376,32 @@ export async function refreshLeadScoreAction(companyId: string): Promise<ActionS
   return { success: true };
 }
 
-export async function validateMapsAction(companyId: string, discrepancy: boolean): Promise<ActionState> {
+/**
+ * Records the user's own Google Maps check (§7). Only the status, timestamp
+ * and the user's note are stored — never any Maps content (MAPS.md).
+ */
+export async function setMapsValidationAction(
+  companyId: string,
+  status: MapsValidationStatus,
+  note?: string | null
+): Promise<ActionState> {
+  if (!MAPS_VALIDATION_STATUSES.includes(status)) return { error: "Status de validação inválido." };
   const workspace = await requireWorkspace();
   const supabase = await createClient();
 
   const { error } = await supabase
     .from("companies")
     .update({
-      maps_validation_status: discrepancy ? "DISCREPANCY_FOUND" : "VALIDATED_BY_USER",
-      maps_last_validated_at: new Date().toISOString(),
+      maps_validation_status: status,
+      maps_last_validated_at: status === "NOT_VALIDATED" ? null : new Date().toISOString(),
+      maps_validation_note: note?.trim() ? note.trim().slice(0, 500) : null,
     })
     .eq("id", companyId)
     .eq("workspace_id", workspace.id);
-  if (error) return { error: "Não foi possível validar o endereço." };
+  if (error) return { error: "Não foi possível registrar a validação." };
 
   revalidatePath(`/companies/${companyId}`);
+  revalidatePath("/companies");
   return { success: true };
 }
 

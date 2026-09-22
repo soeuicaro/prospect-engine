@@ -14,6 +14,8 @@ import {
 import { StageSelector } from "@/components/companies/stage-selector";
 import { RefreshScoreButton } from "@/components/companies/refresh-score-button";
 import { MapsActions } from "@/components/companies/maps-actions";
+import { DataProvenance } from "@/components/companies/data-provenance";
+import { ContactActions } from "@/components/shared/contact-actions";
 import { NoteForm } from "@/components/companies/note-form";
 import { TaskForm } from "@/components/companies/task-form";
 import { FollowupForm } from "@/components/companies/followup-form";
@@ -81,6 +83,29 @@ export default async function CompanyDetailPage({
           <p className="text-sm text-muted-foreground">
             {[industry?.name, company.city, company.state].filter(Boolean).join(" · ")}
           </p>
+          <ContactActions
+            className="mt-2"
+            target={{
+              name: company.trade_name,
+              legalName: company.legal_name,
+              street: company.street,
+              houseNumber: company.street_number,
+              neighborhood: company.neighborhood,
+              city: company.city,
+              state: company.state,
+              lat: company.latitude !== null ? Number(company.latitude) : null,
+              lon: company.longitude !== null ? Number(company.longitude) : null,
+              website: company.website,
+              phone: company.phone,
+              whatsapp: company.whatsapp,
+              email: company.email,
+              socials: Object.fromEntries(
+                social
+                  .filter((s) => s.status === "FOUND" && s.handle_or_url && s.channel !== "whatsapp" && s.channel !== "other")
+                  .map((s) => [s.channel, s.handle_or_url as string])
+              ),
+            }}
+          />
         </div>
         <div className="flex items-center gap-2">
           <RefreshScoreButton companyId={company.id} />
@@ -159,8 +184,20 @@ export default async function CompanyDetailPage({
               </p>
               <MapsActions
                 companyId={company.id}
-                company={company}
+                company={{
+                  trade_name: company.trade_name,
+                  legal_name: company.legal_name,
+                  street: company.street,
+                  street_number: company.street_number,
+                  neighborhood: company.neighborhood,
+                  city: company.city,
+                  state: company.state,
+                  latitude: company.latitude !== null ? Number(company.latitude) : null,
+                  longitude: company.longitude !== null ? Number(company.longitude) : null,
+                }}
                 validationStatus={company.maps_validation_status}
+                validatedAt={company.maps_last_validated_at}
+                note={company.maps_validation_note}
               />
             </CardContent>
           </Card>
@@ -333,16 +370,29 @@ export default async function CompanyDetailPage({
 
           <Card>
             <CardHeader>
-              <CardTitle>Fontes</CardTitle>
+              <CardTitle>Dados encontrados por</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-              {sources.map((s) => (
-                <div key={s.id} className="flex items-center justify-between text-xs">
-                  <span>{s.source_name}</span>
-                  <ConfidenceBadge confidence={s.confidence} />
-                </div>
-              ))}
-              {sources.length === 0 && <p className="text-xs text-muted-foreground">Sem fontes registradas.</p>}
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                {sources.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span>
+                      {s.source_url ? (
+                        <a href={s.source_url} target="_blank" rel="noopener noreferrer" className="underline">
+                          {s.source_name}
+                        </a>
+                      ) : (
+                        s.source_name
+                      )}
+                      <span className="text-muted-foreground"> · {formatDistanceToNow(s.collected_at)}</span>
+                    </span>
+                    <ConfidenceBadge confidence={s.confidence} />
+                  </div>
+                ))}
+                {sources.length === 0 && <p className="text-xs text-muted-foreground">Sem fontes registradas.</p>}
+              </div>
+              <Separator />
+              <DataProvenance companyId={company.id} provenance={company.field_provenance} conflicts={company.data_conflicts} />
             </CardContent>
           </Card>
 

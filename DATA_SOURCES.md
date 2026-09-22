@@ -2,15 +2,26 @@
 
 Every source the product uses or is designed to use, and exactly how.
 
+## Source matrix (Discovery Engine 2.0 — see DISCOVERY.md)
+
+| Source | Status | Purpose | Limit | Data | Cost | Stores | Fallback role |
+|---|---|---|---|---|---|---|---|
+| Local DB (`local_db`) | working | companies already in the workspace, incl. the imported CNPJ base | none (range pages of 1000, cap 2000) | everything we hold | FREE | canonical | always queried first |
+| OSM Overpass (`osm_overpass`) | working, **unstable upstream** (504/429 seen) | tag/name search in the municipality boundary | public mirrors, per-IP quota; 1000 elements | name, category, address tags, phone, website, socials, coords | FREE | yes (ODbL) | primary geo source → falls back to Nominatim, Photon |
+| OSM Nominatim (`osm_nominatim`) | working | geocoding + text POI search | ≤1 req/s; 40/page × 3 pages per term | name, address, extratags (phone/site), coords | FREE | yes (ODbL), geocodes cached 30d | fallback #1, geocoder #1 |
+| OSM Photon (`osm_photon`) | working | text POI search, backup geocoder | fair use; 50 per term | name, address, coords | FREE | yes (ODbL) | fallback #2, geocoder #2 |
+| CNPJ BrasilAPI (`cnpj_brasilapi`) | working | enrichment by CNPJ (no search by city) | no SLA; 3 req/s here | razão social, situação, CNAE, address, phone, email, QSA | FREE | yes (public registry) | enrichment only |
+| Website (`website_discovery`) | working | homepage of the known official site | 1 page/company, 8s | phone, email, WhatsApp, socials | FREE | metadata only | enrichment only |
+| Google Maps (`google_maps`) | working | open/validate links | no API calls | none | FREE | validation status + note only | never a data source |
+
 ## OpenStreetMap (implemented)
 
-- **URL:** https://www.openstreetmap.org, data via Nominatim (geocoding) + Overpass API
+- **Services:** Overpass (3 mirrors), Nominatim, Photon — independent infrastructures, so one failing does not stop discovery. Details, root-cause analysis and limits in `OSM.md`.
 - **Type:** Free, public, open-data (ODbL license)
-- **What we fetch:** place name, category tag, coordinates, address tags, phone/website tags — only for categories the user explicitly searches (`lib/providers/osm.ts`, `OSM_CATEGORIES`)
-- **Method:** `fetch()` with a descriptive `User-Agent` header, per Nominatim's usage policy
-- **Limits:** Nominatim policy caps at ~1 req/sec; each discovery search is a single human-triggered request (no batch crawling), see `ARCHITECTURE.md` for the honest caveat about serverless rate-limiting
-- **Storage:** normalized into `companies` + a `company_sources` row (`source_type: 'OSM'`, linking back to `openstreetmap.org/node/<id>`) — never re-scraped/re-stored in bulk
-- **Attribution:** the source URL is kept per-record; a visible "data © OpenStreetMap contributors" credit in the UI footer is a roadmap item
+- **What we fetch:** place name, category tags, coordinates, address tags, phone/website/social tags — for the tags/terms of the searched niche (`lib/discovery/industries.ts`)
+- **Method:** `lib/discovery/http.ts` (timeout, retry, backoff, throttle, circuit breaker), descriptive `User-Agent`
+- **Storage:** on import, normalized into `companies` + one `company_sources` row per OSM element (`source_record_id = node/<id>|way/<id>|relation/<id>`, linking back to openstreetmap.org), with field-level provenance in `companies.field_provenance`
+- **Attribution:** the source URL is kept per-record; "© OpenStreetMap contributors" in the UI footer is a roadmap item
 
 ## Receita Federal — Dados Abertos CNPJ (implemented via local tool)
 
@@ -22,11 +33,11 @@ Every source the product uses or is designed to use, and exactly how.
 - **Storage:** filtered subset only, never the national dataset
 - **Update cadence:** RFB republishes monthly; re-run the local tool and re-import for fresher data — `imports.dataset_version`/`source_date` track this per import batch
 
-## Google Maps (implemented, validation-only — see MAPS_USAGE.md)
+## Google Maps (implemented, validation-only — see MAPS.md)
 
 - **Type:** Consultation/validation link only, generated from data we already hold
 - **What we do NOT do:** scrape, store, cache, or replicate any Maps content (reviews, photos, place details)
-- **Method:** `lib/domain/maps.ts` builds a `google.com/maps/search/?api=1&query=...` URL; opened in a new tab by the user, who then manually marks `VALIDATED_BY_USER` / `DISCREPANCY_FOUND` on the company record
+- **Method:** `lib/domain/maps.ts` builds a `google.com/maps/search/?api=1&query=...` URL; opened in a new tab by the user, who then records `FOUND` / `NOT_FOUND` / `WRONG_RESULT` / `DUPLICATE` / `NEEDS_REVIEW` + a note on the company record
 
 ## User-provided data (implemented)
 

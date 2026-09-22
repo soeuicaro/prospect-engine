@@ -17,6 +17,8 @@ import {
   ShieldOff,
   Settings,
   Target,
+  Activity,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,6 +60,8 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "Sistema",
     items: [
       { href: "/suppression", label: "Suppression", icon: ShieldOff },
+      { href: "/settings/sources", label: "Fontes de dados", icon: Activity },
+      { href: "/admin/discovery", label: "Qualidade Discovery", icon: Gauge },
       { href: "/settings", label: "Configurações", icon: Settings },
     ],
   },
@@ -96,7 +100,9 @@ export function Sidebar({ workspaceName }: { workspaceName: string }) {
             </p>
             <div className="space-y-0.5">
               {group.items.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                // Most specific match wins, so /settings/sources doesn't also light up /settings.
+                const matches = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+                const active = matches(item.href) && !NAV_ITEMS.some((o) => o.href.length > item.href.length && matches(o.href));
                 const Icon = item.icon;
                 return (
                   <Link

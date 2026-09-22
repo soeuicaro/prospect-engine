@@ -10,6 +10,14 @@ export interface PipelineCard {
   prospect_score: number;
   opportunity_level: string;
   pipeline_stage_id: string | null;
+  street: string | null;
+  street_number: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  phone: string | null;
+  whatsapp: string | null;
+  website: string | null;
+  email: string | null;
 }
 
 export async function getPipelineBoard(workspaceId: string) {
@@ -23,7 +31,9 @@ export async function getPipelineBoard(workspaceId: string) {
       .order("position"),
     supabase
       .from("companies")
-      .select("id, trade_name, legal_name, city, state, pipeline_stage_id, company_scores(prospect_score, opportunity_level)")
+      .select(
+        "id, trade_name, legal_name, city, state, pipeline_stage_id, street, street_number, latitude, longitude, phone, whatsapp, website, email, company_scores(prospect_score, opportunity_level)"
+      )
       .eq("workspace_id", workspaceId)
       .is("deleted_at", null)
       .is("archived_at", null)
@@ -38,10 +48,18 @@ export async function getPipelineBoard(workspaceId: string) {
     city: string | null;
     state: string | null;
     pipeline_stage_id: string | null;
+    street: string | null;
+    street_number: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    phone: string | null;
+    whatsapp: string | null;
+    website: string | null;
+    email: string | null;
     company_scores: { prospect_score: number; opportunity_level: string } | { prospect_score: number; opportunity_level: string }[] | null;
   };
 
-  const cards: PipelineCard[] = ((companies ?? []) as Row[]).map((c) => {
+  const cards: PipelineCard[] = ((companies ?? []) as unknown as Row[]).map((c) => {
     const score = Array.isArray(c.company_scores) ? c.company_scores[0] : c.company_scores;
     return {
       id: c.id,
@@ -50,6 +68,14 @@ export async function getPipelineBoard(workspaceId: string) {
       city: c.city,
       state: c.state,
       pipeline_stage_id: c.pipeline_stage_id,
+      street: c.street,
+      street_number: c.street_number,
+      latitude: c.latitude !== null ? Number(c.latitude) : null,
+      longitude: c.longitude !== null ? Number(c.longitude) : null,
+      phone: c.phone,
+      whatsapp: c.whatsapp,
+      website: c.website,
+      email: c.email,
       prospect_score: score?.prospect_score ?? 0,
       opportunity_level: score?.opportunity_level ?? "BAIXO",
     };

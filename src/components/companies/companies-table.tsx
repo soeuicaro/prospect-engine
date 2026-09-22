@@ -23,6 +23,37 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal } from "lucide-react";
+import { ContactActions } from "@/components/shared/contact-actions";
+import { CompletenessBadge } from "@/components/discovery/badges";
+import { computeCompleteness, completenessLabel } from "@/lib/discovery/completeness";
+import { Badge } from "@/components/ui/badge";
+
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  CNPJ: "CNPJ",
+  OSM: "OSM",
+  WEBSITE: "WEB",
+  MANUAL: "Manual",
+  IMPORT_CSV: "CSV",
+  IMPORT_XLSX: "XLSX",
+  MAPS_VALIDATION: "Maps",
+  OTHER: "Outra",
+};
+
+function rowCompleteness(row: CompanyListRow) {
+  const score = computeCompleteness({
+    cnpj: row.cnpj,
+    name: row.trade_name || row.legal_name || "",
+    street: row.street,
+    city: row.city,
+    phone: row.phone,
+    whatsapp: row.whatsapp,
+    email: row.email,
+    website: row.website,
+    socials: row.socials,
+    hasDecisionMaker: row.has_decision_maker,
+  });
+  return { score, label: completenessLabel(score) };
+}
 
 interface Stage {
   id: string;
@@ -108,6 +139,9 @@ export function CompaniesTable({ rows, stages }: { rows: CompanyListRow[]; stage
               <TableHead>Cidade</TableHead>
               <TableHead>Etapa</TableHead>
               <TableHead>Contato</TableHead>
+              <TableHead>Fontes</TableHead>
+              <TableHead>Completude</TableHead>
+              <TableHead>Ações</TableHead>
               <TableHead>Próxima ação</TableHead>
               <TableHead className="w-10" />
             </TableRow>
@@ -136,6 +170,42 @@ export function CompaniesTable({ rows, stages }: { rows: CompanyListRow[]; stage
                 <TableCell className="text-muted-foreground">{row.stage_label ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {row.whatsapp || row.phone || row.website || "—"}
+                </TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-1">
+                    {row.source_types.map((t) => (
+                      <Badge key={t} variant="outline" className="px-1.5 py-0 text-[10px]">
+                        {SOURCE_TYPE_LABEL[t] ?? t}
+                      </Badge>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {(() => {
+                    const c = rowCompleteness(row);
+                    return <CompletenessBadge label={c.label} score={c.score} />;
+                  })()}
+                </TableCell>
+                <TableCell>
+                  <ContactActions
+                    compact
+                    target={{
+                      name: row.trade_name,
+                      legalName: row.legal_name,
+                      street: row.street,
+                      houseNumber: row.street_number,
+                      neighborhood: row.neighborhood,
+                      city: row.city,
+                      state: row.state,
+                      lat: row.latitude,
+                      lon: row.longitude,
+                      website: row.website,
+                      phone: row.phone,
+                      whatsapp: row.whatsapp,
+                      email: row.email,
+                      socials: row.socials,
+                    }}
+                  />
                 </TableCell>
                 <TableCell className="text-muted-foreground">{row.next_best_action ?? "—"}</TableCell>
                 <TableCell>

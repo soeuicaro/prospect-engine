@@ -1,41 +1,61 @@
-# CNPJ Import
+# CNPJ Import — maximum coverage
 
-## Where to get the data
+The Receita Federal open CNPJ data is the source that actually brings **every active company of a city**
+(OSM only has the few places mapped by volunteers — ~30 restaurants in Sobral vs hundreds with CNPJ).
 
-<https://dadosabertos.rfb.gov.br/CNPJ/> — official Receita Federal open data. Download:
-
-- One or more `Estabelecimentos*.zip` (this is what has address/phone/CNAE/situação cadastral — the file you actually need)
-- `Municipios.zip` (small lookup: numeric city code → name)
-
-Extract both.
-
-## How to filter
-
-You do not want the national dataset in the app's database. Run the local preprocessor:
+## One command: `cnpj_sync.py` (recommended)
 
 ```bash
-cd tools/cnpj-importer
-python cnpj_importer.py \
-  --input-dir /path/to/extracted/estabelecimentos \
-  --output output/my_city.csv \
-  --uf CE \
-  --cnae 5611-2/01 --cnae 5611-2/03 \
-  --municipios-lookup /path/to/Municipios.csv \
-  --checkpoint output/checkpoint.json
+# every active company of the city, with partners (decision makers) and MEI flag
+npm run cnpj:sync -- --uf CE --municipio Sobral --all-cnaes --socios --simples --supabase
+
+# one niche only (primary OR secondary CNAE)
+npm run cnpj:sync -- --uf CE --municipio Sobral --preset restaurante --supabase
+
+# several cities / the whole state
+npm run cnpj:sync -- --uf CE --municipio Sobral --municipio Forquilha --preset clinica --supabase
+npm run cnpj:sync -- --uf CE --preset restaurante --supabase
+
+# quick check: 1 of 10 files, no writes
+npm run cnpj:sync -- --uf CE --municipio Sobral --all-cnaes --sample --dry-run
 ```
 
-Full flag reference and a worked example: `tools/cnpj-importer/README.md`.
+What it does:
 
-## How to import
+- Finds the latest month on the official repository (`arquivos.receitafederal.gov.br`, public share of
+  `Dados/Cadastros/CNPJ`; override the share token with `RFB_SHARE_TOKEN` if the Receita changes it).
+- **Streams** every zip over HTTPS and inflates on the fly — nothing is written to disk unless
+  `--keep-downloads DIR` (reuse the zips for other cities in the same month). Dropped connections resume
+  with HTTP Range. `--parallel N` downloads (default 4). Per-file checkpoints in `tools/cnpj-importer/output/work-*`.
+- Pass 1 `Estabelecimentos0..9` (~5.4 GB): UF + município + CNAE (primary **or secondary**, unless
+  `--primary-only`), situação ATIVA only unless `--include-inactive`.
+- Pass 2 `Empresas0..9` (~1.4 GB): razão social, natureza jurídica, porte.
+- `--socios` (~0.7 GB): public partner list → `company_contacts` (SOCIO). `--simples` (~0.3 GB): MEI flag.
+- Writes to Supabase using `.env.local` (service role): **inserts** new CNPJs; for CNPJs already in the
+  workspace it only refreshes registry fields (situação, razão social, CNAE, porte, abertura) and fills
+  **empty** contact/address fields — it never overwrites what you edited. Also: the full CNAE table
+  (FK of `companies.cnae_primary`), `company_sources` (source CNPJ, dataset month), niche assignment via
+  `industry_cnaes`, field provenance, tags `cnpj-rfb` / `filial`, and an `imports` audit row.
+- `--output file.csv` also writes a CSV (`;`, UTF-8 BOM — opens in Excel).
 
-Upload the resulting CSV on the **Imports** page (`/imports`). The tool's output headers already match the app's column mapper (`trade_name`, `cnpj`, `phone`, `email`, `street`, `neighborhood`, `city`, `state`, `postal_code`); extra columns (`cnae`, `situacao_cadastral`, `data_abertura`, `municipio_codigo`) can be mapped or left as "Ignorar coluna."
+Fixes vs the old importer: companies **without nome fantasia are kept** (razão social is the name — this
+was most small businesses); secondary CNAEs are matched; no 2,000-row upload limit; no manual download.
+Legacy 8-digit mobiles in the registry get the 9th digit (ANATEL rule) so WhatsApp links work; the numbers
+exactly as registered stay in `company_sources.raw_ref.phones_as_registered`.
 
-## How to update
+Measured (2026-09 release, Sobral/CE, sample of 1/10 of the files): 655 active establishments, 609 with
+phone, 394 with e-mail, 395 without nome fantasia. Full run ≈ 10× that. Download speed from the Receita
+was ~1.7 MB/s per connection (~2 MB/s total with 4) → 45–70 min for a full run.
 
-RFB republishes the dataset roughly monthly. Re-download, re-run the local tool (a fresh `--checkpoint` file, or delete the old one to reprocess from scratch), and re-import — the app's dedup logic (`lib/domain/dedup.ts`, matched on CNPJ/domain/phone/email/name+city) skips exact/likely duplicates automatically rather than creating a second copy of every company.
+After syncing, the Discovery source **Banco local** returns these companies (matched by city + niche
+CNAE/keywords, or everything with "Todas as empresas da cidade") and merges them with OSM results.
 
-## Limits in V1
+## Legacy: `cnpj_importer.py` + CSV upload
 
-- The app's CSV importer processes up to 2,000 rows per upload in a single request (serverless timeout safety margin — see `ARCHITECTURE.md`). Split larger exports from the local tool, or re-run it with a narrower `--cnae`/`--uf` filter per file.
-- The local tool currently parses the **Estabelecimentos** file only (address/contact/CNAE/situação). It does not yet join `Empresas` (razão social, porte, capital social) or `Socios`/QSA (partner names) — those are documented as a roadmap extension to `cnpj_importer.py`, not fabricated in the meantime. `legal_name`, `official_size`, and decision-maker contacts from CNPJ data are left blank until that join is built; add them manually or via the website/OSM paths in the meantime.
-- Never scrape the Receita Federal website directly — always use the official bulk dataset.
+Still available for pre-extracted files (`--input-dir`) → CSV → Imports page. Prefer `cnpj_sync.py`.
+
+## Rules
+
+- Only the filtered subset is stored, never the national dataset.
+- Official public data; never scrape the Receita website — always the bulk open-data files.
+- The RFB layout can change between releases; column lists are at the top of `cnpj_sync.py`.

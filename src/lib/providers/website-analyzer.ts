@@ -37,6 +37,8 @@ const SOCIAL_PATTERNS: { key: "instagram" | "facebook" | "tiktok" | "youtube" | 
   { key: "linkedin", pattern: /https?:\/\/(www\.)?linkedin\.com\/(company|in)\/[a-zA-Z0-9_-]+/i },
 ];
 
+const NON_PROFILE_PATH = /\.com\/(p|reel|reels|explore|stories|sharer|share|tr|plugins|dialog|intent|hashtag|watch|embed|login|groups|events|policies)(\/|\.php|$|\?)/i;
+
 const CTA_KEYWORDS = /agende|fale conosco|whatsapp|solicite|pe[çc]a um or[çc]amento|entre em contato|reserve|compre agora/i;
 
 async function hashText(text: string): Promise<string> {
@@ -98,9 +100,15 @@ export async function analyzeWebsite(rawUrl: string): Promise<WebsiteAnalysisRes
   const whatsappMatch = html.match(/(?:wa\.me\/|whatsapp\.com\/send\?phone=)(\d+)/i);
 
   const socialLinks: WebsiteAnalysisResult["socialLinks"] = {};
+  // First link per network that is a PROFILE — share buttons, posts and
+  // plugins (instagram.com/p/…, facebook.com/sharer…) come first on many sites.
   for (const { key, pattern } of SOCIAL_PATTERNS) {
-    const match = html.match(pattern);
-    if (match) socialLinks[key] = match[0];
+    const all = html.matchAll(new RegExp(pattern.source, "gi"));
+    for (const m of all) {
+      if (NON_PROFILE_PATH.test(m[0])) continue;
+      socialLinks[key] = m[0];
+      break;
+    }
   }
 
   const hasContactPage = /href=["'][^"']*(contato|contact|fale-conosco)[^"']*["']/i.test(html);

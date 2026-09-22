@@ -23,7 +23,7 @@ The product spec asks for the domain to survive a Supabase/Vercel departure. Con
 - `lib/supabase/client.ts` / `server.ts` / `admin.ts` are the **only** files that import `@supabase/*`. Nothing else in `lib/domain` or `lib/actions` business logic assumes Postgres syntax beyond standard SQL via the Supabase query builder.
 - `lib/providers/osm.ts` isolates the OpenStreetMap integration behind plain functions (`geocodeCity`, `searchPlaces`) returning domain types (`OsmPlace`), not raw API responses — swapping providers means rewriting this one file.
 - Outreach is provider-agnostic by construction: `lib/domain/phone.ts` builds `wa.me`/`mailto:` links, not calls to a paid messaging API. There is no `MessagingProvider` abstraction yet because there is no provider to abstract — assisted (manual) sending is the entire V1 channel strategy on purpose (see PROMPT MASTER §33-34, §101-103).
-- `lib/domain/maps.ts` only ever builds a Google Maps **search URL** — it never fetches, stores, or replicates Maps content (see `MAPS_USAGE.md`).
+- `lib/domain/maps.ts` only ever builds a Google Maps **search URL** — it never fetches, stores, or replicates Maps content (see `MAPS.md`).
 - `lib/providers/website-analyzer.ts` fetches exactly one page (the homepage), respects `robots.txt` (`lib/providers/robots.ts`), never authenticates, and never stores raw HTML — only extracted flags/metadata/a content hash (`company_analysis`). Gap-fills `companies.phone/email/whatsapp` and `company_social_profiles` only when those fields are empty; never overwrites existing data.
 - An `AIProvider` abstraction is intentionally **not implemented** — the product works entirely without AI (content ideas and message templates are rule/template-based). See Roadmap.
 
