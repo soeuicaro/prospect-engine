@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/workspace";
+import { getOwnerUser } from "@/lib/workspace";
 import { workspaceCreateSchema } from "@/lib/validations/workspace";
 
 export interface OnboardingState {
@@ -23,7 +23,14 @@ export async function createWorkspaceAction(
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
   }
 
-  const user = await requireUser();
+  const user = await getOwnerUser();
+  if (!user) {
+    return {
+      error:
+        "Não encontrei sua conta (profiles) ou não consegui falar com o Supabase. Confira as variáveis de ambiente (ENVIRONMENT.md) e tente de novo.",
+    };
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("create_workspace", {
     p_name: parsed.data.name,

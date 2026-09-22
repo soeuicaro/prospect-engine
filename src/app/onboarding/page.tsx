@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/workspace";
 import { getCurrentWorkspace } from "@/lib/workspace";
 import { OnboardingForm } from "./onboarding-form";
 
@@ -8,7 +7,11 @@ import { OnboardingForm } from "./onboarding-form";
 export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage() {
-  await requireUser();
+  // No requireUser() gate here — this page IS where an unresolvable owner
+  // gets redirected to (see lib/workspace.ts's requireUser()), so gating on
+  // it here would just redirect the page to itself. The owner is only
+  // actually needed at submit time (createWorkspaceAction), where a failure
+  // to resolve one shows a real form error instead.
   const workspace = await getCurrentWorkspace();
   if (workspace) redirect("/dashboard");
 

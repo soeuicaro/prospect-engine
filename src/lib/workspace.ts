@@ -20,13 +20,21 @@ export interface AppUser {
 }
 
 /**
- * `getUser()`/`getWorkspace()` are called from the layout and from every
- * page/action that needs them. `cache()` memoizes each per request (per
- * React render pass) so hitting the DB for "who's the owner"/"what's the
- * workspace" multiple times during one request only costs one round trip
- * each, however many call sites ask for it.
+ * `getOwnerUser()`/`getCurrentWorkspace()` are called from the layout and
+ * from every page/action that needs them. `cache()` memoizes each per
+ * request (per React render pass) so hitting the DB for "who's the
+ * owner"/"what's the workspace" multiple times during one request only
+ * costs one round trip each, however many call sites ask for it.
+ *
+ * Returns null both when no `profiles` row exists yet AND when Supabase
+ * itself is unreachable/unconfigured (`lib/supabase/admin.ts` fails soft,
+ * not throws, so a query against a missing/wrong env var resolves to
+ * `{data: null}` here rather than rejecting) — exported directly (not just
+ * through `requireUser()`) for `onboarding/actions.ts`, which needs to tell
+ * those two cases apart from a normal caller's-page form error rather than
+ * a redirect.
  */
-const getOwnerUser = cache(async (): Promise<AppUser | null> => {
+export const getOwnerUser = cache(async (): Promise<AppUser | null> => {
   const supabase = await createClient();
   const { data } = await supabase.from("profiles").select("id, email").limit(1).maybeSingle();
   if (!data) return null;
@@ -54,14 +62,18 @@ export async function requireWorkspace(): Promise<Workspace> {
  * Use in Server Components/Actions that need "the current user" (really:
  * the one fixed owner) — mainly for `created_by`/`author_id`-style columns
  * and the Topbar's name/email display.
+ *
+ * Redirects to `/onboarding` instead of throwing when no owner can be
+ * resolved (same shape as `requireWorkspace()`) — this can't be told apart
+ * from "Supabase isn't reachable right now" (see `getOwnerUser()`), and a
+ * throw here would crash every single page the moment that's true, exactly
+ * the failure mode `lib/supabase/admin.ts` was fixed to fail soft against.
+ * `onboarding/actions.ts` calls `getOwnerUser()` directly instead, since a
+ * silent bounce back to the same page it's already on would hide the error
+ * rather than show it.
  */
 export async function requireUser(): Promise<AppUser> {
   const user = await getOwnerUser();
   if (user) return user;
-  // No `profiles` row exists yet — nothing has ever signed up. Onboarding
-  // needs an owner id to pass to create_workspace(); without one there's
-  // nothing this app can do.
-  throw new Error(
-    "No owner account found in `profiles`. This app expects exactly one row there — see supabase/migrations/0001_core.sql."
-  );
+  redirect("/onboarding");
 }
