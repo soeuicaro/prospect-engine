@@ -10,6 +10,35 @@ export interface AuthFormState {
   notice?: string;
 }
 
+const AUTH_TIMEOUT_MS = 10_000;
+const AUTH_TIMEOUT_MESSAGE =
+  "A conexão com o servidor demorou demais para responder. Verifique sua internet e tente novamente.";
+
+class AuthTimeoutError extends Error {}
+
+/**
+ * supabase-js's auth methods don't accept an AbortSignal — if the network to
+ * the Supabase Auth server stalls, the call just hangs, and with it the
+ * form's "Entrando..."/"Criando..." state, with no error and no way out for
+ * the user. Races the call against a hard timeout so the action always
+ * settles and the form can show something actionable instead of freezing.
+ */
+function withTimeout<T>(promise: Promise<T>, ms = AUTH_TIMEOUT_MS): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new AuthTimeoutError()), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 export async function signInAction(
   _prevState: AuthFormState,
   formData: FormData
@@ -24,7 +53,14 @@ export async function signInAction(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+
+  let error;
+  try {
+    ({ error } = await withTimeout(supabase.auth.signInWithPassword(parsed.data)));
+  } catch (err) {
+    if (err instanceof AuthTimeoutError) return { error: AUTH_TIMEOUT_MESSAGE };
+    throw err;
+  }
 
   if (error) {
     // Supabase returns this specific code when the account exists and the
@@ -37,7 +73,20 @@ export async function signInAction(
           "Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada (e o spam) e clique no link de confirmação antes de entrar.",
       };
     }
-    return { error: "E-mail ou senha incorretos." };
+    const message =
+      error.code === "invalid_credentials"
+        ? "E-mail ou senha incorretos."
+        : error.code === "user_banned"
+          ? "Esta conta foi suspensa. Entre em contato com o suporte."
+          : error.code === "over_request_rate_limit"
+            ? "Muitas tentativas em pouco tempo — aguarde um instante e tente de novo."
+            : // Same gap this closed in signUpAction (a91ae74): anything else
+              // (provider disabled, project misconfigured, unexpected_failure,
+              // etc.) used to collapse into "E-mail ou senha incorretos.",
+              // which sent users chasing a password reset for a problem that
+              // had nothing to do with their password.
+              error.message || "Não foi possível entrar.";
+    return { error: message };
   }
 
   redirect("/dashboard");
@@ -58,11 +107,20 @@ export async function signUpAction(
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.signUp({
-    email: parsed.data.email,
-    password: parsed.data.password,
-    options: { data: { full_name: parsed.data.full_name } },
-  });
+
+  let data, error;
+  try {
+    ({ data, error } = await withTimeout(
+      supabase.auth.signUp({
+        email: parsed.data.email,
+        password: parsed.data.password,
+        options: { data: { full_name: parsed.data.full_name } },
+      })
+    ));
+  } catch (err) {
+    if (err instanceof AuthTimeoutError) return { error: AUTH_TIMEOUT_MESSAGE };
+    throw err;
+  }
 
   if (error) {
     const message =
@@ -102,6 +160,13 @@ export async function signUpAction(
 
 export async function signOutAction() {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  try {
+    await withTimeout(supabase.auth.signOut());
+  } catch (err) {
+    if (!(err instanceof AuthTimeoutError)) throw err;
+    // Timed out talking to Supabase — the local session cookie may still be
+    // cleared client-side on next load either way; redirecting to /login is
+    // still the right outcome instead of hanging on "saindo...".
+  }
   redirect("/login");
 }

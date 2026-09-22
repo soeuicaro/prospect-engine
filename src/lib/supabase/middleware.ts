@@ -11,6 +11,13 @@ function isPublicPath(pathname: string) {
   );
 }
 
+// Of the public paths, only /login and /signup ever need to know who the
+// user is (to bounce an already-authenticated visitor to /dashboard instead
+// of showing them the login form again).
+function isAuthRedirectPath(pathname: string) {
+  return pathname === "/login" || pathname === "/signup";
+}
+
 // TEMPORARY DEV BYPASS — mirrors src/lib/workspace.ts. Set
 // NEXT_PUBLIC_REQUIRE_AUTH=true in .env.local once real Supabase auth is
 // connected; re-enable before any real deployment (see SECURITY.md).
@@ -21,6 +28,19 @@ const REQUIRE_AUTH = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
  * unauthenticated users away from protected routes. Called from proxy.ts.
  */
 export async function updateSession(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // /privacy, /terms, and /auth/* (the e-mail confirmation callback, which
+  // establishes its own session) never need to know who's asking and never
+  // redirect an already-logged-in visitor away — skip the Supabase Auth
+  // round trip entirely instead of paying its latency on every request to
+  // these routes. Only /login and /signup need that check (see
+  // isAuthRedirectPath), and every non-public route still goes through the
+  // full check below.
+  if (isPublicPath(pathname) && !isAuthRedirectPath(pathname)) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -58,8 +78,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const { pathname } = request.nextUrl;
 
   if (REQUIRE_AUTH && !user && !isPublicPath(pathname)) {
     const url = request.nextUrl.clone();
