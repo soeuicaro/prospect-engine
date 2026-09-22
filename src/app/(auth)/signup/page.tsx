@@ -35,6 +35,7 @@ export default function SignUpPage() {
               <Input id="password" name="password" type="password" required minLength={6} autoComplete="new-password" />
             </div>
             {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+            {state.notice && <p className="text-sm text-emerald-600">{state.notice}</p>}
             <Button type="submit" className="w-full" disabled={pending}>
               {pending ? "Criando..." : "Criar conta"}
             </Button>

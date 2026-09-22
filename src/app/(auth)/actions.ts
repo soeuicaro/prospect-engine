@@ -6,6 +6,8 @@ import { signInSchema, signUpSchema } from "@/lib/validations/workspace";
 
 export interface AuthFormState {
   error?: string;
+  /** Non-error feedback (e.g. "check your email") — rendered without the destructive style. */
+  notice?: string;
 }
 
 export async function signInAction(
@@ -25,6 +27,16 @@ export async function signInAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
+    // Supabase returns this specific code when the account exists and the
+    // password is right but the e-mail was never confirmed — collapsing it
+    // into "wrong e-mail or password" sent users on a pointless password
+    // reset hunt instead of telling them to check their inbox.
+    if (error.code === "email_not_confirmed") {
+      return {
+        error:
+          "Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada (e o spam) e clique no link de confirmação antes de entrar.",
+      };
+    }
     return { error: "E-mail ou senha incorretos." };
   }
 
@@ -46,7 +58,7 @@ export async function signUpAction(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: { data: { full_name: parsed.data.full_name } },
@@ -66,6 +78,23 @@ export async function signUpAction(
                 // project, signups disabled, etc.) instead of a generic dead end.
                 error.message || "Não foi possível criar a conta.";
     return { error: message };
+  }
+
+  // When this Supabase project requires e-mail confirmation (the default,
+  // and the case here), signUp() succeeds but returns no session — the
+  // account can't do anything until the confirmation link is clicked. This
+  // used to redirect straight to /onboarding regardless, which — with no
+  // session — just bounced silently back to /login (via requireUser()) with
+  // no explanation at all, looking exactly like a broken login. Also covers
+  // re-signing up with an already-registered-but-unconfirmed e-mail:
+  // Supabase intentionally returns a fake success (no session, empty
+  // identities) there instead of an error, to avoid leaking which e-mails
+  // are registered.
+  if (!data.session) {
+    return {
+      notice:
+        "Quase lá! Enviamos um e-mail de confirmação — clique no link para ativar sua conta e continuar o cadastro.",
+    };
   }
 
   redirect("/onboarding");
