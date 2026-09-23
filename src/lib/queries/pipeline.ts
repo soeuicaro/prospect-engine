@@ -20,25 +20,40 @@ export interface PipelineCard {
   email: string | null;
 }
 
+const MAX_CARDS = 5000;
+
 export async function getPipelineBoard(workspaceId: string) {
   const supabase = await createClient();
 
-  const [{ data: stages }, { data: companies }] = await Promise.all([
+  // Only companies placed in a stage are leads; the rest of the base (e.g. the
+  // CNPJ import) stays out of the board until sent from Discovery/Empresas.
+  // Paged because PostgREST caps each response at 1000 rows.
+  const loadCards = async () => {
+    const rows: unknown[] = [];
+    for (let from = 0; from < MAX_CARDS; from += 1000) {
+      const { data } = await supabase
+        .from("companies")
+        .select(
+          "id, trade_name, legal_name, city, state, pipeline_stage_id, street, street_number, latitude, longitude, phone, whatsapp, website, email, company_scores(prospect_score, opportunity_level)"
+        )
+        .eq("workspace_id", workspaceId)
+        .is("deleted_at", null)
+        .is("archived_at", null)
+        .not("pipeline_stage_id", "is", null)
+        .order("created_at", { ascending: false })
+        .range(from, Math.min(MAX_CARDS, from + 1000) - 1);
+      rows.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    return rows;
+  };
+  const [{ data: stages }, companies] = await Promise.all([
     supabase
       .from("pipeline_stages")
       .select("id, key, label, color, position, kind")
       .eq("workspace_id", workspaceId)
       .order("position"),
-    supabase
-      .from("companies")
-      .select(
-        "id, trade_name, legal_name, city, state, pipeline_stage_id, street, street_number, latitude, longitude, phone, whatsapp, website, email, company_scores(prospect_score, opportunity_level)"
-      )
-      .eq("workspace_id", workspaceId)
-      .is("deleted_at", null)
-      .is("archived_at", null)
-      .order("created_at", { ascending: false })
-      .limit(500),
+    loadCards(),
   ]);
 
   type Row = {

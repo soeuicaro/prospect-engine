@@ -20,6 +20,7 @@ import { createBrasilApiSource } from "./sources/brasilapi";
 import { createLocalDbSource } from "./sources/local-db";
 import { createNominatimSource, nominatimGeo } from "./sources/nominatim";
 import { createOverpassSource } from "./sources/overpass";
+import { createOvertureSource } from "./sources/overture";
 import { createPhotonSource, photonGeo } from "./sources/photon";
 import { createWebsiteSource } from "./sources/website";
 import {
@@ -65,6 +66,7 @@ export async function loadRuntime(supabase: Client, workspace: Workspace): Promi
     breakers,
     discoverySources: {
       local_db: createLocalDbSource({ supabase, workspaceId: workspace.id }),
+      places_overture: createOvertureSource({ supabase, workspaceId: workspace.id }),
       osm_overpass: createOverpassSource(),
       osm_nominatim: createNominatimSource(),
       osm_photon: createPhotonSource(),
@@ -186,6 +188,8 @@ export function unifiedToRecord(u: UnifiedCompany): SourceCompany {
       .filter((s) => s.source.startsWith("osm_"))
       .map((s) => `osm:${s.recordId}`),
     hasDecisionMaker: u.hasDecisionMaker,
+    contacts: u.contacts?.map((c) => ({ name: c.name, role: c.role })),
+    inPipeline: u.inPipeline,
     name: u.name,
     legalName: u.legalName,
     cnpj: u.cnpj,

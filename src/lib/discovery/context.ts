@@ -10,7 +10,7 @@ import type { SearchContext, SourceKey } from "./types";
 /** Hard ceiling on unique results one search returns (documented, shown in debug). */
 export const SYSTEM_RESULT_LIMIT = 6000;
 
-const sourceKeySchema = z.enum(["local_db", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery", "google_maps"]);
+const sourceKeySchema = z.enum(["local_db", "places_overture", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery", "google_maps"]);
 
 export const searchContextSchema = z.object({
   city: z.string().trim().min(2, "Informe a cidade").max(80),

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "cnpj:sync": "python tools/cnpj-importer/cnpj_sync.py"
+    "cnpj:sync": "python tools/cnpj-importer/cnpj_sync.py",
+    "places:sync": "python tools/places-importer/overture_sync.py"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

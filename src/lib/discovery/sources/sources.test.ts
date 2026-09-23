@@ -3,7 +3,7 @@ import { BreakerRegistry } from "../circuit-breaker";
 import { expandIndustry, getIndustry } from "../industries";
 import { ctx, mockFetch, overpassElements, testEnv } from "../testing";
 import type { ResolvedLocation } from "../types";
-import { createOverpassSource, mirrorBreakerKey, OVERPASS_ENDPOINTS, parseOverpassElements } from "./overpass";
+import { createOverpassSource, mirrorBreakerKey, OVERPASS_ENDPOINTS, parseOverpassElements, runOverpassQuery } from "./overpass";
 import { createNominatimSource, nominatimGeo, pickMunicipality } from "./nominatim";
 import { createPhotonSource } from "./photon";
 import { brasilApiToPatch, createBrasilApiSource, formatCnae } from "./brasilapi";
@@ -86,6 +86,22 @@ describe("Overpass adapter", () => {
     env.config = { ...env.config, timeoutMs: 20, retryCount: 0 };
     const run = await createOverpassSource().search({ context: ctx(), expansion, location: null }, env);
     expect(run.status).toBe("SOURCE_TIMEOUT");
+  });
+
+  it("main mirror hangs → next mirror starts after the hedge delay and wins; the hung request is cancelled", async () => {
+    const { impl, calls } = mockFetch({
+      "overpass-api.de": [{ throws: "timeout" }],
+      "maps.mail.ru": [{ status: 200, body: withArea(overpassElements(3)) }],
+    });
+    const env = testEnv("osm_overpass", impl);
+    env.config = { ...env.config, timeoutMs: 10_000, retryCount: 0 };
+    const t0 = Date.now();
+    const run = await runOverpassQuery("[out:json];", env, OVERPASS_ENDPOINTS, 20);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(run.data?.elements).toHaveLength(4);
+    expect(calls.map((c) => new URL(c.url).host)).toEqual(["overpass-api.de", "maps.mail.ru"]);
+    // Cancelled loser is not counted as a mirror failure.
+    expect(env.breakers.get(mirrorBreakerKey(OVERPASS_ENDPOINTS[0])).consecutiveFailures).toBe(0);
   });
 
   it("OSM malformed result (HTML on 200) → tries the next mirror", async () => {

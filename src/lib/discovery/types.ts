@@ -19,6 +19,7 @@ export type { Confidence };
 
 export type SourceKey =
   | "local_db"
+  | "places_overture"
   | "osm_overpass"
   | "osm_nominatim"
   | "osm_photon"
@@ -146,10 +147,14 @@ export interface SourceCompany {
   collectedAt: string;
   verifiedAt?: string | null;
   companyId?: string | null; // set when the record is an existing DB company
+  /** Existing DB company that already sits in a pipeline stage. */
+  inPipeline?: boolean;
   originSourceTypes?: string[]; // company_sources.source_type for local records
   /** Cross-source identity keys, e.g. "osm:node/123" on a local record imported from OSM. */
   linkedRecordIds?: string[];
   hasDecisionMaker?: boolean;
+  /** Named owners/partners/decision-makers already known for this record. */
+  contacts?: { name: string; role: string | null }[];
   name: string;
   legalName?: string | null;
   tradeName?: string | null;
@@ -262,6 +267,8 @@ export interface UnifiedCompany {
   discoveryStatus: "EXISTING" | "NEW";
   rankScore: number;
   hasDecisionMaker: boolean;
+  /** In the DB AND in a pipeline stage (companyId alone = only in the prospecting base). */
+  inPipeline?: boolean;
   /** Public registry partners (QSA) or other decision-maker hints, with source. */
   contacts?: { name: string; role: string | null; source: SourceKey }[];
   enrichment: { state: EnrichmentState; sources: SourceKey[]; message?: string | null };

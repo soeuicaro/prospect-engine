@@ -29,9 +29,12 @@ export interface ImportResult {
   updated?: number;
   skipped?: number;
   possibleDuplicates?: number;
+  /** result key → company id, so the UI can mark imported rows as "no pipeline". */
+  linked?: { key: string; companyId: string }[];
 }
 
 const SOURCE_TYPE: Partial<Record<SourceKey, SourceType>> = {
+  places_overture: "OVERTURE",
   osm_overpass: "OSM",
   osm_nominatim: "OSM",
   osm_photon: "OSM",
@@ -40,6 +43,7 @@ const SOURCE_TYPE: Partial<Record<SourceKey, SourceType>> = {
 };
 
 const SOURCE_NAME: Partial<Record<SourceKey, string>> = {
+  places_overture: "Overture Maps Places",
   osm_overpass: "OpenStreetMap (Overpass)",
   osm_nominatim: "OpenStreetMap (Nominatim)",
   osm_photon: "OpenStreetMap (Photon)",
@@ -253,6 +257,8 @@ export async function importDiscoveryResultsAction(companies: UnifiedCompany[], 
         patch.geo_source = "OSM";
       }
       if (!cur.industry_id && industryId) patch.industry_id = industryId;
+      // Base companies (e.g. CNPJ import) enter the pipeline when sent from Discovery.
+      if (!cur.pipeline_stage_id && newStage?.id) patch.pipeline_stage_id = newStage.id;
       patch.field_provenance = { ...provenanceJson(u), ...(cur.field_provenance ?? {}) };
       const conflicts = conflictsJson(u);
       if (conflicts.length) patch.data_conflicts = [...(cur.data_conflicts ?? []).filter((c) => !conflicts.some((n) => n.field === c.field)), ...conflicts];
@@ -278,6 +284,7 @@ export async function importDiscoveryResultsAction(companies: UnifiedCompany[], 
 
   // ---- create new companies --------------------------------------------------
   interface Prepared {
+    key: string;
     company: Partial<Company> & { id: string };
     sources: Partial<CompanySource>[];
     social: ReturnType<typeof socialRows>;
@@ -313,6 +320,7 @@ export async function importDiscoveryResultsAction(companies: UnifiedCompany[], 
       scoringWeights
     );
     prepared.push({
+      key: u.key,
       company: {
         id,
         workspace_id: workspace.id,
@@ -416,8 +424,15 @@ export async function importDiscoveryResultsAction(companies: UnifiedCompany[], 
   });
 
   revalidatePath("/companies");
+  revalidatePath("/pipeline");
   if (failures.length && !created && !updated) return { error: "Não foi possível importar as empresas (erro no banco)." };
-  return { created, updated, skipped: companies.length - created - toUpdate.length, possibleDuplicates: toCreate.filter((t) => t.possibleDuplicate).length };
+  return {
+    created,
+    updated,
+    skipped: companies.length - created - toUpdate.length,
+    possibleDuplicates: toCreate.filter((t) => t.possibleDuplicate).length,
+    linked: [...toUpdate.map((t) => ({ key: t.u.key, companyId: t.companyId })), ...succeeded.map((r) => ({ key: r.key, companyId: r.company.id }))],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -507,7 +522,7 @@ export async function testSourceAction(source: SourceKey, input: SourceTestInput
 export async function testAllSourcesAction(input: SourceTestInput): Promise<SourceTestResult[]> {
   const workspace = await requireWorkspace();
   const supabase = await createClient();
-  const keys: SourceKey[] = ["local_db", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery"];
+  const keys: SourceKey[] = ["local_db", "places_overture", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery"];
   const results = await Promise.all(keys.map((k) => runSourceTest(supabase, workspace, k, input)));
   await persistTestLogs(supabase, workspace.id, results);
   revalidatePath("/settings/sources");

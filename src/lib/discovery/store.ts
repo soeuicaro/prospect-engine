@@ -253,16 +253,26 @@ export async function getSearchRow(supabase: Client, workspaceId: string, id: st
   return data ?? null;
 }
 
-export async function listSearchRows(supabase: Client, workspaceId: string, opts: { savedOnly?: boolean; limit?: number } = {}) {
-  let q = supabase
-    .from("discovery_searches")
-    .select("id, name, saved, query_text, context, status, outcome, sources_used, sources_failed, counts, final_count, quality_score, duration_ms, created_at")
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(opts.limit ?? 20);
-  if (opts.savedOnly) q = q.eq("saved", true);
-  const { data } = await q;
-  return data ?? [];
+const SEARCH_LIST_COLUMNS =
+  "id, name, saved, query_text, context, status, outcome, sources_used, sources_failed, counts, final_count, quality_score, duration_ms, created_at";
+
+/** Search history, newest first. `limit: null` pages through everything (PostgREST caps a response at 1000 rows). */
+export async function listSearchRows(supabase: Client, workspaceId: string, opts: { savedOnly?: boolean; limit?: number | null } = {}) {
+  const max = opts.limit === null ? 20_000 : (opts.limit ?? 20);
+  const out = [];
+  for (let from = 0; from < max; from += 1000) {
+    let q = supabase
+      .from("discovery_searches")
+      .select(SEARCH_LIST_COLUMNS)
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false })
+      .range(from, Math.min(max, from + 1000) - 1);
+    if (opts.savedOnly) q = q.eq("saved", true);
+    const { data } = await q;
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }
 
 /** Rebuild a SearchResponse from a stored row (cache hit / reopen). */
@@ -322,16 +332,12 @@ export async function insertRequestLogs(supabase: Client, workspaceId: string, s
   await supabase.from("source_request_logs").insert(rows);
 }
 
-/** Cheap housekeeping on each search (free-plan storage economy). */
+/**
+ * Cheap housekeeping on each search: only raw request logs expire. Search
+ * results are kept forever (saved or not) so the whole history can be
+ * reopened; `expires_at` only governs cache reuse.
+ */
 export async function pruneDiscoveryData(supabase: Client, workspaceId: string) {
   const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86_400_000).toISOString();
-  await Promise.all([
-    supabase.from("source_request_logs").delete().eq("workspace_id", workspaceId).lt("created_at", cutoff),
-    supabase
-      .from("discovery_searches")
-      .update({ results: [] })
-      .eq("workspace_id", workspaceId)
-      .eq("saved", false)
-      .lt("expires_at", new Date(Date.now() - 7 * 86_400_000).toISOString()),
-  ]);
+  await supabase.from("source_request_logs").delete().eq("workspace_id", workspaceId).lt("created_at", cutoff);
 }

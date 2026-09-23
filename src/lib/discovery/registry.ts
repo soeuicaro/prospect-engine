@@ -72,6 +72,38 @@ export const SOURCE_DEFINITIONS: SourceDefinition[] = [
     },
   },
   {
+    key: "places_overture",
+    label: "Overture Maps (locais estilo Google Maps — dados abertos)",
+    shortLabel: "OVT",
+    kind: "discovery",
+    cost: "FREE",
+    purpose: "Estabelecimentos do Overture Maps Places (Meta/Facebook, Microsoft, Foursquare, AllThePlaces) importados por cidade com tools/places-importer. Telefone, site, e-mail, redes sociais e categoria — o equivalente gratuito de uma ficha do Google Maps.",
+    limits: "Nenhum na busca (lê o banco). A importação baixa só os blocos da cidade do bucket público (sem chave, sem custo). Uma release nova por mês.",
+    storage: "Tabela places_pois (licença CDLA-Permissive-2.0 — pode armazenar e usar comercialmente).",
+    requiresConfig: false,
+    capabilities: caps({
+      canSearch: true,
+      canReturnPhone: true,
+      canReturnWebsite: true,
+      canReturnEmail: true,
+      canReturnAddress: true,
+      canReturnCoordinates: true,
+      canReturnSocials: true,
+      supportsPagination: "range",
+    }),
+    defaults: {
+      enabled: true,
+      priority: 1,
+      timeoutMs: 10_000,
+      retryCount: 1,
+      rateLimitPerSec: 20,
+      cacheTtlMinutes: 24 * 60,
+      maxResults: 6000,
+      fallbackEnabled: false,
+      fallbackTo: [],
+    },
+  },
+  {
     key: "osm_overpass",
     label: "OpenStreetMap — Overpass API",
     shortLabel: "OSM",
@@ -251,7 +283,7 @@ export const DISCOVERY_SOURCE_KEYS: SourceKey[] = SOURCE_DEFINITIONS.filter((s) 
 export const ENRICHMENT_SOURCE_KEYS: SourceKey[] = SOURCE_DEFINITIONS.filter((s) => s.kind === "enrichment").map((s) => s.key);
 
 /** FAST depth uses only primary sources; fallbacks still fire on failure. */
-export const PRIMARY_DISCOVERY_SOURCES: SourceKey[] = ["local_db", "osm_overpass"];
+export const PRIMARY_DISCOVERY_SOURCES: SourceKey[] = ["local_db", "places_overture", "osm_overpass"];
 
 export function sourceLabel(key: SourceKey): string {
   return SOURCE_DEFINITIONS.find((s) => s.key === key)?.shortLabel ?? key;
@@ -295,14 +327,14 @@ export type FieldPriority = Record<string, SourceKey[]>;
 
 export const DEFAULT_FIELD_PRIORITY: FieldPriority = {
   // Cadastral identity: official registry first, then the user's own data.
-  identity: ["cnpj_brasilapi", "local_db", "osm_overpass", "osm_nominatim", "osm_photon", "website_discovery"],
+  identity: ["cnpj_brasilapi", "local_db", "osm_overpass", "places_overture", "osm_nominatim", "osm_photon", "website_discovery"],
   // Contact: the company's own website > data we already hold > directories.
-  phone: ["website_discovery", "local_db", "cnpj_brasilapi", "osm_overpass", "osm_nominatim", "osm_photon"],
-  email: ["website_discovery", "local_db", "cnpj_brasilapi", "osm_overpass", "osm_nominatim"],
-  website: ["website_discovery", "local_db", "osm_overpass", "osm_nominatim", "osm_photon"],
-  social: ["website_discovery", "local_db", "osm_overpass", "osm_nominatim"],
+  phone: ["website_discovery", "local_db", "places_overture", "cnpj_brasilapi", "osm_overpass", "osm_nominatim", "osm_photon"],
+  email: ["website_discovery", "local_db", "cnpj_brasilapi", "places_overture", "osm_overpass", "osm_nominatim"],
+  website: ["website_discovery", "local_db", "places_overture", "osm_overpass", "osm_nominatim", "osm_photon"],
+  social: ["website_discovery", "local_db", "places_overture", "osm_overpass", "osm_nominatim"],
   // Address: official registry + geographic sources.
-  address: ["cnpj_brasilapi", "local_db", "osm_overpass", "osm_nominatim", "osm_photon"],
+  address: ["cnpj_brasilapi", "local_db", "osm_overpass", "osm_nominatim", "places_overture", "osm_photon"],
   // Coordinates: geographic sources first.
-  coordinates: ["osm_overpass", "osm_nominatim", "osm_photon", "local_db"],
+  coordinates: ["osm_overpass", "osm_nominatim", "places_overture", "osm_photon", "local_db"],
 };

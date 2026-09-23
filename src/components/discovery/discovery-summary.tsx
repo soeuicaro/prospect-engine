@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { getSourceDefinition } from "@/lib/discovery/registry";
+import { COMPLETENESS_WEIGHTS, completenessBreakdown } from "@/lib/discovery/completeness";
+import { formatSeconds } from "@/lib/utils-date";
 import type { SearchContext, SearchResponse, SourceKey, UnifiedCompany } from "@/lib/discovery/types";
 import { RunStatusBadge } from "./badges";
 
@@ -15,7 +17,21 @@ export interface EnrichProgress {
   running: number;
   total: number;
   failed: number;
+  startedAt: number | null;
+  /** When the last batch finished — basis for the remaining-time estimate. */
+  updatedAt?: number;
 }
+
+export const COMPLETENESS_FIELD_LABEL: Record<keyof typeof COMPLETENESS_WEIGHTS, string> = {
+  cnpj: "CNPJ",
+  name: "Nome",
+  address: "Endereço",
+  phone: "Telefone/WhatsApp",
+  email: "E-mail",
+  website: "Site",
+  social: "Rede social",
+  decisionMaker: "Dono/sócio",
+};
 
 const OUTCOME_STYLE: Record<SearchResponse["outcome"], string> = {
   SUCCESS: "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100",
@@ -52,6 +68,7 @@ export function DiscoverySummary({
   };
   const activeFilters = response.diagnostics.filters.filter((f) => f.active);
   const failedRuns = response.sourceRuns.filter((r) => /ERROR|TIMEOUT|RATE_LIMITED|BLOCKED|CIRCUIT/.test(r.status));
+  const overtureMissing = response.sourceRuns.some((r) => r.source === "places_overture" && r.warnings.some((w) => w.includes("ainda não foi importada")));
 
   return (
     <div className="space-y-4">
@@ -80,6 +97,21 @@ export function DiscoverySummary({
         </div>
       )}
 
+      {overtureMissing && (
+        <div className="space-y-1 rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-900 dark:bg-orange-950/30 dark:text-orange-100">
+          <p className="font-medium">
+            {response.context.city}/{response.context.state} ainda não tem os locais do Overture Maps (a fonte que mais traz empresas, grátis).
+          </p>
+          <p className="text-xs">
+            Rode uma vez no terminal do projeto (~20 s por cidade):{" "}
+            <code className="rounded bg-background px-1 py-0.5">
+              npm run places:sync -- --uf {response.context.state} --municipio &quot;{response.context.city}&quot;
+            </code>{" "}
+            e depois clique em Refresh.
+          </p>
+        </div>
+      )}
+
       {response.outcome === "NO_RESULTS" || results.length === 0 ? (
         <Card>
           <CardContent className="space-y-3 pt-6 text-center">
@@ -96,7 +128,7 @@ export function DiscoverySummary({
           <Stat label="Com Instagram" value={s.withInstagram} />
           <Stat label="Com CNPJ" value={s.withCnpj} />
           <Stat label="Com e-mail" value={s.withEmail} />
-          <Stat label="Já no banco" value={results.filter((c) => c.companyId).length} />
+          <Stat label="Já no pipeline" value={results.filter((c) => c.inPipeline).length} />
         </div>
       )}
 
@@ -132,6 +164,7 @@ export function DiscoverySummary({
                   {enrich.done} enriquecidas <span className="text-sm text-muted-foreground">· {enrich.running} em processamento{enrich.failed ? ` · ${enrich.failed} falharam` : ""}</span>
                 </p>
                 <Progress value={((enrich.done + enrich.failed) / enrich.total) * 100} />
+                <EnrichEta enrich={enrich} />
               </>
             ) : (
               <p className="text-muted-foreground">
@@ -143,6 +176,8 @@ export function DiscoverySummary({
           </CardContent>
         </Card>
       </div>
+
+      <CompletenessExplainer results={results} />
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="font-medium">Filtros ativos:</span>
@@ -284,6 +319,81 @@ function SuggestionButtons({
         </Button>
       )}
     </div>
+  );
+}
+
+function EnrichEta({ enrich }: { enrich: EnrichProgress }) {
+  const processed = enrich.done + enrich.failed;
+  const remaining = enrich.total - processed;
+  if (!remaining) return <p className="text-muted-foreground">Concluído.</p>;
+  if (!enrich.startedAt || !enrich.updatedAt || !processed) return <p className="text-muted-foreground">Calculando tempo restante...</p>;
+  const perItem = (enrich.updatedAt - enrich.startedAt) / 1000 / processed;
+  return <p className="text-muted-foreground">~{formatSeconds(perItem * remaining)} restantes ({remaining} na fila)</p>;
+}
+
+/**
+ * Explains the completeness score with the points table and a real example
+ * from this search (the weakest record), so "Fraco 35%" is actionable.
+ */
+function CompletenessExplainer({ results }: { results: UnifiedCompany[] }) {
+  const [open, setOpen] = useState(false);
+  if (!results.length) return null;
+  const weak = results.filter((c) => c.completenessLabel === "FRACO").length;
+  const partial = results.filter((c) => c.completenessLabel === "PARCIAL").length;
+  const example = [...results].sort((a, b) => a.completeness - b.completeness)[0];
+  const breakdown = completenessBreakdown(example);
+  const keys = Object.keys(COMPLETENESS_WEIGHTS) as (keyof typeof COMPLETENESS_WEIGHTS)[];
+  const missing = keys.filter((k) => !breakdown[k]);
+  return (
+    <Card>
+      <CardHeader className="cursor-pointer py-3" onClick={() => setOpen((v) => !v)}>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />} Como funciona a completude?
+          <span className="text-xs font-normal text-muted-foreground">
+            🟢 {results.length - weak - partial} completas · 🟡 {partial} parciais · 🔴 {weak} fracas
+          </span>
+        </CardTitle>
+      </CardHeader>
+      {open && (
+        <CardContent className="grid gap-4 text-xs md:grid-cols-2">
+          <div className="space-y-1">
+            <p>
+              Cada empresa começa em 0% e ganha pontos por dado encontrado. <strong>🟢 Completo ≥ 75%</strong> · <strong>🟡 Parcial ≥ 45%</strong> ·{" "}
+              <strong>🔴 Fraco &lt; 45%</strong>. Dado faltando nunca remove a empresa da lista — só indica o que falta para você abordar.
+            </p>
+            <table className="w-full">
+              <tbody>
+                {keys.map((k) => (
+                  <tr key={k} className="border-b last:border-0">
+                    <td className="py-0.5">{COMPLETENESS_FIELD_LABEL[k]}</td>
+                    <td className="text-right font-medium">+{COMPLETENESS_WEIGHTS[k]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="space-y-1">
+            <p className="font-medium">Exemplo desta busca: por que “{example.name}” está com {example.completeness}%?</p>
+            <ul className="space-y-0.5">
+              {keys.map((k) => {
+                const has = breakdown[k];
+                return (
+                  <li key={k} className={has ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
+                    {has ? "✓" : "✗"} {COMPLETENESS_FIELD_LABEL[k]} {has ? `(+${COMPLETENESS_WEIGHTS[k]})` : `— faltando (−${COMPLETENESS_WEIGHTS[k]})`}
+                  </li>
+                );
+              })}
+            </ul>
+            {missing.length > 0 && (
+              <p className="text-muted-foreground">
+                Como melhorar: “Enriquecer” busca o CNPJ na Receita (traz sócios, telefone e e-mail cadastrais) e o site oficial (traz redes sociais,
+                e-mail e telefone). OSM raramente tem CNPJ, e-mail ou dono.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      )}
+    </Card>
   );
 }
 

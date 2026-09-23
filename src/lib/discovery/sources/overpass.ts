@@ -12,7 +12,8 @@
  *
  * Now: municipality-boundary query (no geocoder needed), bbox/radius
  * fallbacks, all niche tags in ONE request, 3 mirrors each behind its own
- * circuit breaker, remark detection with best-partial retention.
+ * circuit breaker (staggered/hedged, not sequential), remark detection with
+ * best-partial retention.
  */
 
 import { requestWithPolicy, SourceRequestError } from "../http";
@@ -57,11 +58,24 @@ export function mirrorBreakerKey(endpoint: string): string {
   return `osm_overpass@${new URL(endpoint).host}`;
 }
 
-/** Runs one query across mirrors. Keeps the largest partial answer seen. */
+/**
+ * If a mirror hasn't answered after this long, the next mirror is started
+ * in parallel (hedged request). Before, mirrors ran strictly one after the
+ * other: a hanging overpass-api.de ate the whole 25s attempt and the
+ * fallback mirror was left with ~1.5s before the search deadline.
+ */
+export const OVERPASS_HEDGE_DELAY_MS = 6_000;
+
+/**
+ * Runs one query across mirrors, staggered: first success wins and the
+ * other in-flight requests are cancelled. A failing mirror starts the next
+ * one immediately. Keeps the largest partial answer seen.
+ */
 export async function runOverpassQuery(
   query: string,
   env: SourceEnv,
-  endpoints: string[] = OVERPASS_ENDPOINTS
+  endpoints: string[] = OVERPASS_ENDPOINTS,
+  hedgeDelayMs = OVERPASS_HEDGE_DELAY_MS
 ): Promise<{
   data: OverpassResponse | null;
   partial: boolean;
@@ -74,22 +88,47 @@ export async function runOverpassQuery(
   const endpointsTried: string[] = [];
   let bestPartial: OverpassResponse | null = null;
   const rounds = 1 + Math.max(0, env.config.retryCount);
+  const done = (data: OverpassResponse | null) => ({ data: data ?? bestPartial, partial: !data && Boolean(bestPartial), logs, errors, endpointsTried });
 
   for (let round = 0; round < rounds; round++) {
-    for (const [index, endpoint] of endpoints.entries()) {
-      if (env.signal.aborted || Date.now() >= env.deadline) break;
-      const bkey = mirrorBreakerKey(endpoint);
-      const host = new URL(endpoint).host;
-      if (!env.breakers.canRequest(bkey)) {
-        if (round === 0) {
-          errors.push({ kind: "CIRCUIT_OPEN", message: `Circuit breaker aberto para ${host}`, endpoint: host });
+    if (env.signal.aborted || Date.now() >= env.deadline) break;
+    const candidates = endpoints.filter((endpoint) => {
+      if (env.breakers.canRequest(mirrorBreakerKey(endpoint))) return true;
+      if (round === 0) errors.push({ kind: "CIRCUIT_OPEN", message: `Circuit breaker aberto para ${new URL(endpoint).host}`, endpoint: new URL(endpoint).host });
+      return false;
+    });
+    if (!candidates.length) continue;
+
+    const local = new AbortController();
+    const signal = AbortSignal.any([env.signal, local.signal]);
+    const outcome = await new Promise<{ data: OverpassResponse | null; stop: boolean }>((resolve) => {
+      let launched = 0;
+      let pending = 0;
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (data: OverpassResponse | null, stop = false) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        local.abort();
+        resolve({ data, stop });
+      };
+      const launchNext = () => {
+        if (settled) return;
+        if (launched >= candidates.length || signal.aborted || Date.now() >= env.deadline) {
+          if (pending === 0) finish(null);
+          return;
         }
-        continue;
-      }
-      endpointsTried.push(host);
-      const started = Date.now();
-      try {
-        const outcome = await requestWithPolicy<OverpassResponse>(
+        const index = launched++;
+        const endpoint = candidates[index];
+        const bkey = mirrorBreakerKey(endpoint);
+        const host = new URL(endpoint).host;
+        endpointsTried.push(host);
+        pending++;
+        clearTimeout(timer);
+        timer = setTimeout(launchNext, hedgeDelayMs);
+        const started = Date.now();
+        requestWithPolicy<OverpassResponse>(
           {
             source: "osm_overpass",
             url: endpoint,
@@ -99,10 +138,10 @@ export async function runOverpassQuery(
             queryForLog: query,
             timeoutMs: env.config.timeoutMs,
             retries: 0, // move to the next mirror instead of hammering this one
-            signal: env.signal,
+            signal,
             deadline: env.deadline,
             throttle: throttleFor(host, env.config.rateLimitPerSec),
-            fallbackActivated: env.isFallback || index > 0 || round > 0,
+            fallbackActivated: env.isFallback || endpoint !== endpoints[0] || round > 0,
             parse: (text) => {
               const json = JSON.parse(text) as OverpassResponse;
               if (!json || !Array.isArray(json.elements)) throw new Error("campo 'elements' ausente");
@@ -118,29 +157,38 @@ export async function runOverpassQuery(
             countResults: (data) => data.elements.length,
           },
           env.http
+        ).then(
+          (res) => {
+            pending--;
+            logs.push(...res.logs);
+            env.breakers.recordSuccess(bkey, { latencyMs: res.latencyMs, results: res.data.elements.length, status: "SOURCE_SUCCESS" });
+            finish(res.data);
+          },
+          (err) => {
+            pending--;
+            // A loser cancelled because another mirror already answered: not a mirror failure.
+            if (settled && local.signal.aborted && !env.signal.aborted) return;
+            const { entry, logs: errLogs } = errorEntry(err);
+            logs.push(...errLogs);
+            errors.push(entry);
+            if (entry.kind === "ABORTED") return finish(null, true);
+            env.breakers.recordFailure(bkey, {
+              latencyMs: Date.now() - started,
+              error: entry.message,
+              kind: entry.kind,
+              status: entry.kind === "PARTIAL_RESPONSE" ? "SOURCE_PARTIAL_RESULTS" : "SOURCE_ERROR",
+            });
+            // HTTP 400 = our query is malformed; another mirror would reject it too.
+            if (err instanceof SourceRequestError && err.kind === "HTTP_4XX" && err.httpStatus === 400) return finish(null, true);
+            launchNext(); // failed fast → don't wait for the hedge timer
+          }
         );
-        logs.push(...outcome.logs);
-        env.breakers.recordSuccess(bkey, { latencyMs: outcome.latencyMs, results: outcome.data.elements.length, status: "SOURCE_SUCCESS" });
-        return { data: outcome.data, partial: false, logs, errors, endpointsTried };
-      } catch (err) {
-        const { entry, logs: errLogs } = errorEntry(err);
-        logs.push(...errLogs);
-        errors.push(entry);
-        if (entry.kind === "ABORTED") return { data: bestPartial, partial: Boolean(bestPartial), logs, errors, endpointsTried };
-        env.breakers.recordFailure(bkey, {
-          latencyMs: Date.now() - started,
-          error: entry.message,
-          kind: entry.kind,
-          status: entry.kind === "PARTIAL_RESPONSE" ? "SOURCE_PARTIAL_RESULTS" : "SOURCE_ERROR",
-        });
-        // HTTP 400 = our query is malformed; another mirror would reject it too.
-        if (err instanceof SourceRequestError && err.kind === "HTTP_4XX" && err.httpStatus === 400) {
-          return { data: bestPartial, partial: Boolean(bestPartial), logs, errors, endpointsTried };
-        }
-      }
-    }
+      };
+      launchNext();
+    });
+    if (outcome.data || outcome.stop) return done(outcome.data);
   }
-  return { data: bestPartial, partial: Boolean(bestPartial), logs, errors, endpointsTried };
+  return done(null);
 }
 
 export function parseOverpassElements(

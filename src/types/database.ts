@@ -282,6 +282,7 @@ export type SourceType =
   | "IMPORT_CSV"
   | "IMPORT_XLSX"
   | "MAPS_VALIDATION"
+  | "OVERTURE"
   | "OTHER";
 
 export type CompanySource = {
@@ -654,6 +655,31 @@ export type SourceRequestLogRow = {
   created_at: string;
 }
 
+export type PlacesPoiRow = {
+  id: string;
+  workspace_id: string;
+  source: string;
+  source_id: string;
+  release: string | null;
+  name: string;
+  category: string | null;
+  categories: string[];
+  confidence: number | null;
+  operating_status: string | null;
+  phones: string[];
+  websites: string[];
+  emails: string[];
+  socials: string[];
+  street: string | null;
+  postcode: string | null;
+  city: string;
+  state: string;
+  latitude: number | null;
+  longitude: number | null;
+  datasets: string[];
+  imported_at: string;
+};
+
 export type GeocodeCacheRow = {
   cache_key: string;
   result: Record<string, unknown>;
@@ -790,6 +816,7 @@ export interface Database {
       source_health: Table<SourceHealthRow>;
       source_request_logs: Table<SourceRequestLogRow, [Fk<"source_request_logs_search_id_fkey", ["search_id"], "discovery_searches">]>;
       geocode_cache: Table<GeocodeCacheRow>;
+      places_pois: Table<PlacesPoiRow>;
       settings: Table<SettingRow>;
     };
     Views: Record<string, never>;

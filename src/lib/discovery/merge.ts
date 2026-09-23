@@ -320,7 +320,7 @@ export interface MergeResult {
   clusterOf: Map<number, string>; // record index → unified key
 }
 
-const SOURCE_ORDER: SourceKey[] = ["local_db", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery"];
+const SOURCE_ORDER: SourceKey[] = ["local_db", "places_overture", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery"];
 
 export function mergeSourceCompanies(records: SourceCompany[], opts: MergeOptions = {}): MergeResult {
   const now = opts.now ?? Date.now();
@@ -492,12 +492,24 @@ function buildUnified(members: Prepared[], priority: FieldPriority, now: number,
     discoveryStatus: companyIds.length ? "EXISTING" : "NEW",
     rankScore: 0,
     hasDecisionMaker: members.some((m) => m.rec.hasDecisionMaker),
+    contacts: mergeContacts(members.map((m) => m.rec)),
+    inPipeline: members.some((m) => m.rec.inPipeline),
     enrichment: { state: "PENDING", sources: [] },
     warnings,
   };
   if (cnpjStatus && cnpjStatus !== "ATIVA") unified.warnings.push(`Situação cadastral: ${cnpjStatus}`);
   refreshDerived(unified);
   return unified;
+}
+
+function mergeContacts(recs: SourceCompany[]): UnifiedCompany["contacts"] {
+  const out: NonNullable<UnifiedCompany["contacts"]> = [];
+  for (const r of recs) {
+    for (const c of r.contacts ?? []) {
+      if (!out.some((o) => foldText(o.name) === foldText(c.name))) out.push({ ...c, source: r.source });
+    }
+  }
+  return out.length ? out : undefined;
 }
 
 /** Recompute completeness/labels/rank after any change (merge or enrichment). */

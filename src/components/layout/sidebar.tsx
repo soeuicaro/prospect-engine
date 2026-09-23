@@ -74,7 +74,7 @@ export function Sidebar({ workspaceName }: { workspaceName: string }) {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
       <div className="flex h-16 items-center gap-2.5 border-b border-sidebar-border px-5">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <Target className="size-4.5" />

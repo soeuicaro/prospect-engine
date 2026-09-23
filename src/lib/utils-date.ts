@@ -31,3 +31,11 @@ export function formatDateTimeBR(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("pt-BR");
 }
+
+/** 42 → "42s", 135 → "2min 15s". */
+export function formatSeconds(total: number): string {
+  const s = Math.max(0, Math.round(total));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}min${s % 60 ? ` ${s % 60}s` : ""}`;
+}

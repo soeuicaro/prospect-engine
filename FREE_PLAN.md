@@ -14,6 +14,7 @@
 | Vercel | Hobby (free) | Hosting, Functions |
 | OpenStreetMap (Nominatim + Overpass) | Free, public | Discovery |
 | Receita Federal Dados Abertos | Free, public | CNPJ import (local preprocessing) |
+| Overture Maps Places | Free, open data (CDLA-Permissive-2.0), no key | Business places per city (`npm run places:sync`) |
 | Google Maps | Free (public URL, no API key) | Validation link only |
 
 No credit card is required anywhere in this stack to run the MVP.

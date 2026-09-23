@@ -71,10 +71,14 @@ interface LocalRow {
   whatsapp: string | null;
   last_verified_at: string | null;
   updated_at: string;
+  pipeline_stage_id: string | null;
   company_sources: { source_type: string; source_record_id: string | null }[] | null;
   company_social_profiles: { channel: string; handle_or_url: string | null; status: string }[] | null;
-  company_contacts: { contact_type: string }[] | null;
+  company_contacts: { name: string | null; role: string | null; contact_type: string }[] | null;
 }
+
+const DECISION_MAKER_TYPES = ["SOCIO", "DECISOR_ESTIMADO", "RESPONSAVEL_CADASTRAL"];
+const CONTACT_TYPE_ROLE: Record<string, string> = { SOCIO: "Sócio", DECISOR_ESTIMADO: "Decisor", RESPONSAVEL_CADASTRAL: "Responsável cadastral" };
 
 export function localRowToCompany(row: LocalRow, matchedBy: SourceCompany["matchedBy"]): SourceCompany | null {
   const name = row.trade_name || row.legal_name;
@@ -95,6 +99,7 @@ export function localRowToCompany(row: LocalRow, matchedBy: SourceCompany["match
     collectedAt: row.updated_at,
     verifiedAt: row.last_verified_at,
     companyId: row.id,
+    inPipeline: Boolean(row.pipeline_stage_id),
     originSourceTypes: origins,
     linkedRecordIds: (row.company_sources ?? [])
       .filter((s) => s.source_type === "OSM" && s.source_record_id)
@@ -119,7 +124,10 @@ export function localRowToCompany(row: LocalRow, matchedBy: SourceCompany["match
     lat: row.latitude !== null ? Number(row.latitude) : null,
     lon: row.longitude !== null ? Number(row.longitude) : null,
     socials,
-    hasDecisionMaker: (row.company_contacts ?? []).some((c) => ["SOCIO", "DECISOR_ESTIMADO", "RESPONSAVEL_CADASTRAL"].includes(c.contact_type)),
+    hasDecisionMaker: (row.company_contacts ?? []).some((c) => DECISION_MAKER_TYPES.includes(c.contact_type)),
+    contacts: (row.company_contacts ?? [])
+      .filter((c) => c.name && DECISION_MAKER_TYPES.includes(c.contact_type))
+      .map((c) => ({ name: c.name!, role: c.role ?? CONTACT_TYPE_ROLE[c.contact_type] ?? null })),
     matchedBy,
     confidence: official ? "HIGH" : "MEDIUM",
   };
@@ -171,9 +179,9 @@ export function createLocalDbSource(deps: { supabase: SupabaseClient<Database>; 
           .from("companies")
           .select(
             `id, trade_name, legal_name, cnpj, cnpj_status, cnae_primary, cnae_secondary, industry_id, street, street_number, neighborhood,
-             city, state, postal_code, latitude, longitude, phone, email, website, whatsapp, last_verified_at, updated_at,
+             city, state, postal_code, latitude, longitude, phone, email, website, whatsapp, last_verified_at, updated_at, pipeline_stage_id,
              company_sources(source_type, source_record_id), company_social_profiles(channel, handle_or_url, status),
-             company_contacts(contact_type)`
+             company_contacts(name, role, contact_type)`
           )
           .eq("workspace_id", deps.workspaceId)
           .is("deleted_at", null)

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 const SOURCE_STYLE: Partial<Record<SourceKey, string>> = {
   local_db: "border-sky-300 text-sky-700 dark:text-sky-300",
+  places_overture: "border-orange-300 text-orange-700 dark:text-orange-300",
   osm_overpass: "border-emerald-300 text-emerald-700 dark:text-emerald-300",
   osm_nominatim: "border-teal-300 text-teal-700 dark:text-teal-300",
   osm_photon: "border-lime-300 text-lime-700 dark:text-lime-300",

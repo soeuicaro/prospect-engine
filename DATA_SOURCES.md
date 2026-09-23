@@ -7,6 +7,7 @@ Every source the product uses or is designed to use, and exactly how.
 | Source | Status | Purpose | Limit | Data | Cost | Stores | Fallback role |
 |---|---|---|---|---|---|---|---|
 | Local DB (`local_db`) | working | companies already in the workspace, incl. the imported CNPJ base | none (range pages of 1000, cap 2000) | everything we hold | FREE | canonical | always queried first |
+| Overture Maps (`places_overture`) | working | business places imported per city (`npm run places:sync`) — the free stand-in for a Google Maps listing | none at search time (reads `places_pois`); import downloads only the city's row groups | name, category, phones, websites, e-mails, socials, address, coords | FREE | yes (CDLA-Permissive-2.0) | primary; runs alongside the local DB |
 | OSM Overpass (`osm_overpass`) | working, **unstable upstream** (504/429 seen) | tag/name search in the municipality boundary | public mirrors, per-IP quota; 1000 elements | name, category, address tags, phone, website, socials, coords | FREE | yes (ODbL) | primary geo source → falls back to Nominatim, Photon |
 | OSM Nominatim (`osm_nominatim`) | working | geocoding + text POI search | ≤1 req/s; 40/page × 3 pages per term | name, address, extratags (phone/site), coords | FREE | yes (ODbL), geocodes cached 30d | fallback #1, geocoder #1 |
 | OSM Photon (`osm_photon`) | working | text POI search, backup geocoder | fair use; 50 per term | name, address, coords | FREE | yes (ODbL) | fallback #2, geocoder #2 |

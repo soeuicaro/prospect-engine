@@ -15,8 +15,8 @@ export default async function DiscoveryPage({ searchParams }: { searchParams: Pr
   const [industries, health, history, saved, reopened] = await Promise.all([
     listIndustries(workspace.id),
     getSourceHealthOverview(workspace),
-    listDiscoverySearches(workspace.id, { limit: 10 }),
-    listDiscoverySearches(workspace.id, { savedOnly: true, limit: 20 }),
+    listDiscoverySearches(workspace.id, { limit: null }),
+    listDiscoverySearches(workspace.id, { savedOnly: true, limit: null }),
     params.search ? getSearchRow(supabase, workspace.id, params.search) : Promise.resolve(null),
   ]);
 

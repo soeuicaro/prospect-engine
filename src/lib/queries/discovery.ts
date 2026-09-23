@@ -73,7 +73,7 @@ export async function getSourceHealthOverview(workspace: Workspace): Promise<Sou
   });
 }
 
-export async function listDiscoverySearches(workspaceId: string, opts: { savedOnly?: boolean; limit?: number } = {}) {
+export async function listDiscoverySearches(workspaceId: string, opts: { savedOnly?: boolean; limit?: number | null } = {}) {
   const supabase = await createClient();
   return listSearchRows(supabase, workspaceId, opts);
 }

@@ -7,16 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { NativeSelect } from "@/components/shared/native-select";
+import { ChoiceSelect } from "@/components/shared/choice-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ContactActions } from "@/components/shared/contact-actions";
 import { displayPhone } from "@/lib/domain/contact-links";
 import { getSourceDefinition, sourceLabel } from "@/lib/discovery/registry";
 import { foldText, hostOf } from "@/lib/discovery/normalize";
+import { COMPLETENESS_WEIGHTS, completenessBreakdown } from "@/lib/discovery/completeness";
 import type { MergeField, UnifiedCompany } from "@/lib/discovery/types";
 import { CompletenessBadge, ConfidencePill, QualityBadge, SourceBadges } from "./badges";
+import { COMPLETENESS_FIELD_LABEL } from "./discovery-summary";
 
-const PAGE_SIZE = 50;
+/** 0 = everything on one page (default: the user wants to see every result). */
+const PAGE_SIZES = [0, 50, 100, 200, 500];
+
+function missingFields(c: UnifiedCompany): (keyof typeof COMPLETENESS_WEIGHTS)[] {
+  const b = completenessBreakdown(c);
+  return (Object.keys(COMPLETENESS_WEIGHTS) as (keyof typeof COMPLETENESS_WEIGHTS)[]).filter((k) => !b[k]);
+}
 
 const FIELD_LABEL: Partial<Record<MergeField, string>> = {
   name: "Nome",
@@ -40,7 +48,7 @@ const FIELD_LABEL: Partial<Record<MergeField, string>> = {
   youtube: "YouTube",
 };
 
-type Filter = "all" | "new" | "existing" | "review" | "no_phone" | "no_website";
+type Filter = "all" | "new" | "existing" | "review" | "no_phone" | "no_website" | "with_owner";
 
 export function DiscoveryResults({
   results,
@@ -62,6 +70,7 @@ export function DiscoveryResults({
   const [sort, setSort] = useState<"rank" | "completeness" | "name">("rank");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const view = useMemo(() => {
@@ -74,36 +83,51 @@ export function DiscoveryResults({
       const f = foldText(q);
       list = list.filter((c) => foldText(`${c.name} ${c.legalName ?? ""} ${c.street ?? ""} ${c.neighborhood ?? ""} ${c.category ?? ""}`).includes(f));
     }
-    if (filter === "new") list = list.filter((c) => !c.companyId);
-    if (filter === "existing") list = list.filter((c) => c.companyId);
+    if (filter === "new") list = list.filter((c) => !c.inPipeline);
+    if (filter === "existing") list = list.filter((c) => c.inPipeline);
     if (filter === "review") list = list.filter((c) => c.qualityLabel === "NEEDS_REVIEW");
     if (filter === "no_phone") list = list.filter((c) => !c.phone && !c.whatsapp);
     if (filter === "no_website") list = list.filter((c) => !c.website);
+    if (filter === "with_owner") list = list.filter((c) => c.contacts?.length);
     return list;
   }, [results, sort, topOnly, limit, q, filter]);
 
-  const pages = Math.max(1, Math.ceil(view.length / PAGE_SIZE));
+  const size = pageSize || Math.max(1, view.length);
+  const pages = Math.max(1, Math.ceil(view.length / size));
   const current = Math.min(page, pages);
-  const pageRows = view.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  const pageRows = view.slice((current - 1) * size, current * size);
   const allOnPageSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.key));
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Filtrar resultados..." className="h-8 w-52" />
-        <NativeSelect value={filter} onChange={(e) => { setFilter(e.target.value as Filter); setPage(1); }} className="w-52">
-          <option value="all">Todas</option>
-          <option value="new">Novas (fora do banco)</option>
-          <option value="existing">Já no banco</option>
-          <option value="review">Precisa revisão</option>
-          <option value="no_phone">Sem telefone</option>
-          <option value="no_website">Sem website (oportunidade)</option>
-        </NativeSelect>
-        <NativeSelect value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="w-44">
-          <option value="rank">Relevância</option>
-          <option value="completeness">Completude</option>
-          <option value="name">Nome</option>
-        </NativeSelect>
+        <ChoiceSelect
+          value={filter}
+          onValueChange={(v) => { setFilter(v as Filter); setPage(1); }}
+          className="w-56"
+          aria-label="Filtro"
+          options={[
+            { value: "all", label: "Todas" },
+            { value: "new", label: "Fora do pipeline" },
+            { value: "existing", label: "Já no pipeline" },
+            { value: "with_owner", label: "Com dono/sócio identificado" },
+            { value: "review", label: "Precisa revisão" },
+            { value: "no_phone", label: "Sem telefone" },
+            { value: "no_website", label: "Sem website (oportunidade)" },
+          ]}
+        />
+        <ChoiceSelect
+          value={sort}
+          onValueChange={(v) => setSort(v as typeof sort)}
+          className="w-44"
+          aria-label="Ordenar por"
+          options={[
+            { value: "rank", label: "Relevância" },
+            { value: "completeness", label: "Completude" },
+            { value: "name", label: "Nome" },
+          ]}
+        />
         {results.length > limit && (
           <label className="flex items-center gap-2">
             <Checkbox checked={topOnly} onCheckedChange={(v) => { setTopOnly(Boolean(v)); setPage(1); }} />
@@ -118,8 +142,15 @@ export function DiscoveryResults({
             Limpar seleção
           </Button>
         )}
+        <ChoiceSelect
+          value={String(pageSize)}
+          onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}
+          className="w-40"
+          aria-label="Linhas por página"
+          options={PAGE_SIZES.map((n) => ({ value: String(n), label: n ? `${n} por página` : "Mostrar todas" }))}
+        />
         <span className="ml-auto text-xs text-muted-foreground">
-          {view.length} exibidas · página {current}/{pages}
+          {view.length} de {results.length} exibidas{pages > 1 ? ` · página ${current}/${pages}` : ""}
         </span>
       </div>
 
@@ -132,6 +163,7 @@ export function DiscoveryResults({
               </TableHead>
               <TableHead className="w-6" />
               <TableHead>Empresa</TableHead>
+              <TableHead>Dono / sócio</TableHead>
               <TableHead>Endereço</TableHead>
               <TableHead>Telefone</TableHead>
               <TableHead>Website</TableHead>
@@ -167,13 +199,25 @@ export function DiscoveryResults({
                       </div>
                       <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
                         {c.category && <span>{c.category}</span>}
-                        {c.companyId && <Badge variant="outline" className="px-1 py-0 text-[10px]">no banco</Badge>}
+                        {c.companyId &&
+                          (c.inPipeline ? (
+                            <Badge variant="outline" className="border-sky-300 px-1 py-0 text-[10px] text-sky-700 dark:text-sky-300">
+                              no pipeline
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="px-1 py-0 text-[10px]" title="Está no banco (ex.: base CNPJ), mas ainda não foi enviada ao pipeline">
+                              na base
+                            </Badge>
+                          ))}
                         {c.qualityLabel !== "PARTIAL" && <QualityBadge label={c.qualityLabel} />}
                         {c.conflicts.length > 0 && <span className="text-amber-700">{c.conflicts.length} conflito(s)</span>}
                         {c.possibleDuplicates.length > 0 && <span className="text-violet-700">possível duplicata</span>}
                         {c.enrichment.state === "RUNNING" && <Loader2 className="size-3 animate-spin" />}
                         {c.enrichment.state === "DONE" && <span className="text-emerald-700">enriquecida</span>}
                       </div>
+                    </TableCell>
+                    <TableCell className="max-w-48 text-xs">
+                      <OwnerCell company={c} />
                     </TableCell>
                     <TableCell className="max-w-56 text-xs text-muted-foreground">
                       {[c.street, c.houseNumber].filter(Boolean).join(", ") || "—"}
@@ -184,8 +228,9 @@ export function DiscoveryResults({
                     <TableCell>
                       <SourceBadges sources={c.sourceKeys} />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="max-w-40">
                       <CompletenessBadge label={c.completenessLabel} score={c.completeness} />
+                      <MissingHint company={c} />
                     </TableCell>
                     <TableCell>
                       <ConfidencePill confidence={c.confidence} />
@@ -214,7 +259,7 @@ export function DiscoveryResults({
                   </TableRow>
                   {open && (
                     <TableRow>
-                      <TableCell colSpan={10} className="bg-muted/20">
+                      <TableCell colSpan={11} className="bg-muted/20">
                         <ResultDetail company={c} onEnrich={() => onEnrichOne(c)} />
                       </TableCell>
                     </TableRow>
@@ -224,7 +269,7 @@ export function DiscoveryResults({
             })}
             {pageRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={11} className="py-8 text-center text-sm text-muted-foreground">
                   Nenhum resultado com este filtro.
                 </TableCell>
               </TableRow>
@@ -247,6 +292,42 @@ export function DiscoveryResults({
   );
 }
 
+function OwnerCell({ company: c }: { company: UnifiedCompany }) {
+  const [first, ...rest] = c.contacts ?? [];
+  if (first) {
+    return (
+      <div title={(c.contacts ?? []).map((p) => `${p.name}${p.role ? ` (${p.role})` : ""} — ${sourceLabel(p.source)}`).join("\n")}>
+        <div className="font-medium">{first.name}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {first.role ?? "Sócio"}
+          {rest.length > 0 && ` · +${rest.length}`}
+        </div>
+      </div>
+    );
+  }
+  let why = "sem CNPJ — não dá para consultar o quadro societário";
+  if (c.cnpj && c.enrichment.state === "RUNNING") why = "consultando Receita...";
+  else if (c.cnpj && c.enrichment.state === "DONE") why = "Receita não lista sócios (ex.: MEI/EI)";
+  else if (c.cnpj) why = "clique em Enriquecer para consultar a Receita";
+  else if (c.enrichment.state === "PENDING" || c.enrichment.state === "SKIPPED") why = "Enriquecer pode achar o CNPJ e os sócios";
+  return (
+    <span className="text-muted-foreground" title={why}>
+      não identificado
+      <span className="block text-[10px] leading-tight">{why}</span>
+    </span>
+  );
+}
+
+function MissingHint({ company }: { company: UnifiedCompany }) {
+  const missing = missingFields(company);
+  if (!missing.length) return null;
+  return (
+    <p className="text-[10px] leading-tight text-muted-foreground" title={missing.map((k) => `${COMPLETENESS_FIELD_LABEL[k]} (−${COMPLETENESS_WEIGHTS[k]})`).join(", ")}>
+      falta: {missing.map((k) => COMPLETENESS_FIELD_LABEL[k].toLowerCase()).join(", ")}
+    </p>
+  );
+}
+
 function ResultDetail({ company: c, onEnrich }: { company: UnifiedCompany; onEnrich: () => void }) {
   const fields = Object.entries(c.provenance) as [MergeField, NonNullable<UnifiedCompany["provenance"][MergeField]>][];
   return (
@@ -266,10 +347,32 @@ function ResultDetail({ company: c, onEnrich }: { company: UnifiedCompany; onEnr
         </div>
         {c.phones.length > 1 && <p className="pt-1">Outros telefones: {c.phones.filter((p) => p !== c.phone).map((p) => displayPhone(p)).join(", ")}</p>}
         {c.contacts && c.contacts.length > 0 && (
-          <p className="pt-1">
-            Sócios (quadro societário público): {c.contacts.map((p) => `${p.name}${p.role ? ` (${p.role})` : ""}`).join("; ")}
-          </p>
+          <div className="pt-1">
+            <p className="font-medium">Donos / sócios</p>
+            {c.contacts.map((p) => (
+              <p key={p.name}>
+                {p.name}
+                {p.role ? ` — ${p.role}` : ""} <span className="text-muted-foreground">· {sourceLabel(p.source)}</span>
+              </p>
+            ))}
+          </div>
         )}
+        <div className="pt-1">
+          <p className="font-medium">
+            Completude {c.completeness}% — por quê
+          </p>
+          <div className="flex flex-wrap gap-x-3">
+            {(Object.keys(COMPLETENESS_WEIGHTS) as (keyof typeof COMPLETENESS_WEIGHTS)[]).map((k) => {
+              const has = completenessBreakdown(c)[k];
+              return (
+                <span key={k} className={has ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
+                  {has ? "✓" : "✗"} {COMPLETENESS_FIELD_LABEL[k]} ({has ? "+" : "−"}
+                  {COMPLETENESS_WEIGHTS[k]})
+                </span>
+              );
+            })}
+          </div>
+        </div>
       </div>
       <div className="space-y-2">
         {c.conflicts.length > 0 && (

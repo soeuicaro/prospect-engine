@@ -1,17 +1,21 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Papa from "papaparse";
 import { toast } from "sonner";
-import { Download, History, Loader2, RefreshCw, Save, Search, Square, Star } from "lucide-react";
+import { Download, History, Info, Loader2, RefreshCw, Save, Search, Square, Star, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { NativeSelect } from "@/components/shared/native-select";
+import { Progress } from "@/components/ui/progress";
+import { ChoiceSelect } from "@/components/shared/choice-select";
 import { importDiscoveryResultsAction, saveSearchAction } from "@/lib/actions/discovery";
 import { discoveryCsvRows } from "@/lib/discovery/export";
+import { foldText } from "@/lib/discovery/normalize";
+import { formatSeconds } from "@/lib/utils-date";
 import type {
   HealthStatus,
   SearchContext,
@@ -24,6 +28,7 @@ import type {
 import { HealthIndicator, RunStatusBadge } from "./badges";
 import { DiscoveryResults } from "./discovery-results";
 import { DiscoverySummary, type EnrichProgress } from "./discovery-summary";
+import { CityAutocomplete, StateAutocomplete } from "./location-autocomplete";
 
 export interface NicheOption {
   value: string;
@@ -56,6 +61,20 @@ interface HistoryItem {
 type SourceProgress = { status: SourceRunStatus; returned: number; durationMs: number; isFallback: boolean; message: string | null };
 
 const ENRICH_BATCH = 5;
+
+/** Mirrors DEPTH_DEADLINE_MS in lib/discovery/orchestrator.ts (hard ceiling per depth). */
+const DEPTH_DEADLINE_S: Record<SearchContext["depth"], number> = { FAST: 20, BALANCED: 40, DEEP: 55 };
+
+/** Expected search time: median of this workspace's past searches at the same depth, else ~60% of the ceiling. */
+function estimateSearchSeconds(history: HistoryItem[], depth: SearchContext["depth"]): number {
+  const durations = history
+    .filter((h) => h.duration_ms && (h.context as { depth?: string }).depth === depth)
+    .slice(0, 20)
+    .map((h) => h.duration_ms! / 1000)
+    .sort((a, b) => a - b);
+  if (!durations.length) return Math.round(DEPTH_DEADLINE_S[depth] * 0.6);
+  return Math.max(3, Math.round(durations[Math.floor(durations.length / 2)]));
+}
 
 export function DiscoveryWorkbench({
   niches,
@@ -105,13 +124,24 @@ export function DiscoveryWorkbench({
   const [results, setResults] = useState<UnifiedCompany[]>(initial?.results ?? []);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [enrich, setEnrich] = useState<EnrichProgress>({ done: 0, running: 0, total: 0, failed: 0 });
+  const [enrich, setEnrich] = useState<EnrichProgress>({ done: 0, running: 0, total: 0, failed: 0, startedAt: null });
+  const [enriching, setEnriching] = useState(false);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [saveName, setSaveName] = useState("");
   const [importing, startImport] = useTransition();
   const abortRef = useRef<AbortController | null>(null);
   const enrichAbortRef = useRef<AbortController | null>(null);
 
   const nicheOption = niches.find((n) => n.value === niche) ?? null;
+  const router = useRouter();
+
+  // Ticks the elapsed/remaining time while a search runs.
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [running]);
 
   const applyContextToForm = useCallback(
     (ctx: Partial<SearchContext>) => {
@@ -160,15 +190,20 @@ export function DiscoveryWorkbench({
     return { ...base, ...patch };
   }
 
-  const runEnrichment = useCallback(async (resp: SearchResponse, list: UnifiedCompany[]) => {
+  const runEnrichment = useCallback(async (resp: SearchResponse, list: UnifiedCompany[], manual = false) => {
     enrichAbortRef.current?.abort();
-    const pendingList = list.filter((c) => c.enrichment.state === "PENDING");
-    if (!pendingList.length || resp.context.depth === "FAST" || resp.context.autoEnrichTop === 0) return;
+    // Automatic run: the top-ranked PENDING batch. Manual run: everything not enriched yet.
+    const pendingList = list
+      .filter((c) => c.enrichment.state === "PENDING" || (manual && c.enrichment.state === "SKIPPED"))
+      .map((c) => (c.enrichment.state === "SKIPPED" ? { ...c, enrichment: { ...c.enrichment, state: "PENDING" as const } } : c));
+    if (!pendingList.length || (!manual && (resp.context.depth === "FAST" || resp.context.autoEnrichTop === 0))) return;
     const controller = new AbortController();
     enrichAbortRef.current = controller;
     let done = 0;
     let failed = 0;
-    setEnrich({ done: 0, running: pendingList.length, total: pendingList.length, failed: 0 });
+    const t0 = Date.now();
+    setEnriching(true);
+    setEnrich({ done: 0, running: pendingList.length, total: pendingList.length, failed: 0, startedAt: t0 });
     for (let i = 0; i < pendingList.length; i += ENRICH_BATCH) {
       if (controller.signal.aborted) break;
       const batch = pendingList.slice(i, i + ENRICH_BATCH);
@@ -194,8 +229,9 @@ export function DiscoveryWorkbench({
           prev.map((c) => (keys.has(c.key) ? { ...c, enrichment: { state: "FAILED", sources: [], message: "Lote de enriquecimento falhou" } } : c))
         );
       }
-      setEnrich({ done, failed, running: Math.max(0, pendingList.length - done - failed), total: pendingList.length });
+      setEnrich({ done, failed, running: Math.max(0, pendingList.length - done - failed), total: pendingList.length, startedAt: t0, updatedAt: Date.now() });
     }
+    if (enrichAbortRef.current === controller) setEnriching(false);
   }, []);
 
   async function runSearch(patch: Partial<SearchContext> = {}, refresh: "none" | "all" | { source: SourceKey; searchId: string } = "none") {
@@ -210,12 +246,14 @@ export function DiscoveryWorkbench({
     const controller = new AbortController();
     abortRef.current = controller;
     setRunning(true);
+    setStartedAt(Date.now());
+    setNow(Date.now());
     setFatalError(null);
     setPhase("Buscando empresas...");
     setSourceProgress({});
     setLiveCount(null);
     setSelected(new Set());
-    setEnrich({ done: 0, running: 0, total: 0, failed: 0 });
+    setEnrich({ done: 0, running: 0, total: 0, failed: 0, startedAt: null });
 
     try {
       const res = await fetch("/api/discovery/search", {
@@ -272,6 +310,12 @@ export function DiscoveryWorkbench({
     enrichAbortRef.current?.abort();
   }
 
+  function stopEnrichment() {
+    enrichAbortRef.current?.abort();
+    setEnriching(false);
+    setResults((prev) => prev.map((c) => (c.enrichment.state === "RUNNING" ? { ...c, enrichment: { ...c.enrichment, state: "PENDING" } } : c)));
+  }
+
   async function enrichOne(company: UnifiedCompany) {
     if (!response) return;
     const target = { ...company, enrichment: { ...company.enrichment, state: "PENDING" as const } };
@@ -296,10 +340,17 @@ export function DiscoveryWorkbench({
     startImport(async () => {
       const res = await importDiscoveryResultsAction(chosen, nicheOption?.industryId ?? null, response?.searchId ?? null);
       if (res.error) toast.error(res.error);
-      else
-        toast.success(
-          `${res.created ?? 0} criada(s), ${res.updated ?? 0} complementada(s) no banco${res.possibleDuplicates ? `, ${res.possibleDuplicates} marcada(s) como possível duplicata` : ""}.`
+      else {
+        const linked = new Map((res.linked ?? []).map((l) => [l.key, l.companyId]));
+        setResults((prev) =>
+          prev.map((c) => (linked.has(c.key) ? { ...c, companyId: linked.get(c.key)!, inPipeline: true, discoveryStatus: "EXISTING" } : c))
         );
+        setSelected(new Set());
+        toast.success(
+          `${res.created ?? 0} nova(s) no pipeline (etapa “Novo”), ${res.updated ?? 0} já existente(s) complementada(s)${res.possibleDuplicates ? `, ${res.possibleDuplicates} marcada(s) como possível duplicata` : ""}.`,
+          { action: { label: "Abrir pipeline", onClick: () => router.push("/pipeline") } }
+        );
+      }
     });
   }
 
@@ -325,6 +376,15 @@ export function DiscoveryWorkbench({
   }
 
   const selectedCount = selected.size;
+  const notEnriched = results.filter((c) => c.enrichment.state === "SKIPPED" || c.enrichment.state === "PENDING").length;
+
+  // Search progress: sources that answered + elapsed vs. expected time.
+  const expectedS = estimateSearchSeconds(history, depth);
+  const elapsedS = startedAt ? (now - startedAt) / 1000 : 0;
+  const sourcesDone = Object.keys(sourceProgress).length;
+  const sourcesTotal = Math.max(1, enabledSources.size);
+  const progressPct = Math.min(97, Math.max((sourcesDone / sourcesTotal) * 90, (elapsedS / expectedS) * 100));
+  const remainingS = expectedS - elapsedS;
   const breadcrumb = useMemo(() => {
     if (!response) return [];
     const ctx = response.context;
@@ -351,20 +411,25 @@ export function DiscoveryWorkbench({
             }}
           >
             <Field label="Cidade" className="md:col-span-2">
-              <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Sobral" required />
+              <CityAutocomplete
+                value={city}
+                state={state}
+                onChange={setCity}
+                onPick={(name, uf) => {
+                  setCity(name);
+                  setState(uf);
+                }}
+              />
             </Field>
             <Field label="UF">
-              <Input value={state} onChange={(e) => setState(e.target.value)} maxLength={20} placeholder="CE" required />
+              <StateAutocomplete value={state} onChange={setState} />
             </Field>
             <Field label="Nicho" className="md:col-span-2">
-              <NativeSelect value={niche} onChange={(e) => setNiche(e.target.value)} className="w-full">
-                <option value="">Somente palavras-chave</option>
-                {niches.map((n) => (
-                  <option key={n.value} value={n.value}>
-                    {n.label}
-                  </option>
-                ))}
-              </NativeSelect>
+              <ChoiceSelect
+                value={niche}
+                onValueChange={setNiche}
+                options={[{ value: "", label: "Somente palavras-chave" }, ...niches.map((n) => ({ value: n.value, label: n.label }))]}
+              />
             </Field>
             <Field label="Meta de quantidade">
               <Input type="number" min={1} max={6000} value={limit} onChange={(e) => setLimit(Number(e.target.value) || 500)} />
@@ -373,18 +438,26 @@ export function DiscoveryWorkbench({
               <Input value={keywordsText} onChange={(e) => setKeywordsText(e.target.value)} placeholder="ex.: açaí, marmitaria" />
             </Field>
             <Field label="Modo">
-              <NativeSelect value={mode} onChange={(e) => setMode(e.target.value as SearchContext["mode"])} className="w-full">
-                <option value="BROAD">Amplo — máximo de resultados (padrão)</option>
-                <option value="BALANCED">Balanceado</option>
-                <option value="PRECISE">Preciso — menos, mais qualidade</option>
-              </NativeSelect>
+              <ChoiceSelect
+                value={mode}
+                onValueChange={(v) => setMode(v as SearchContext["mode"])}
+                options={[
+                  { value: "BROAD", label: "Amplo — máximo de resultados (padrão)" },
+                  { value: "BALANCED", label: "Balanceado" },
+                  { value: "PRECISE", label: "Preciso — menos, mais qualidade" },
+                ]}
+              />
             </Field>
             <Field label="Profundidade">
-              <NativeSelect value={depth} onChange={(e) => setDepth(e.target.value as SearchContext["depth"])} className="w-full">
-                <option value="FAST">Rápida — fontes primárias</option>
-                <option value="BALANCED">Balanceada (padrão)</option>
-                <option value="DEEP">Profunda — enriquecimento amplo</option>
-              </NativeSelect>
+              <ChoiceSelect
+                value={depth}
+                onValueChange={(v) => setDepth(v as SearchContext["depth"])}
+                options={[
+                  { value: "FAST", label: "Rápida — fontes primárias" },
+                  { value: "BALANCED", label: "Balanceada (padrão)" },
+                  { value: "DEEP", label: "Profunda — enriquecimento amplo" },
+                ]}
+              />
             </Field>
             <Field label="Raio (km, opcional)">
               <Input type="number" min={1} max={100} value={radius} onChange={(e) => setRadius(e.target.value)} placeholder="limite do município" />
@@ -465,13 +538,24 @@ export function DiscoveryWorkbench({
 
           {running && (
             <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-sm">
-              <p className="flex items-center gap-2 font-medium">
+              <p className="flex flex-wrap items-center gap-2 font-medium">
                 <Loader2 className="size-4 animate-spin" /> {phase}
                 {liveCount && (
                   <span className="text-muted-foreground">
                     {liveCount.found} encontradas · {liveCount.unique} únicas
                   </span>
                 )}
+                <span className="ml-auto text-xs font-normal text-muted-foreground">
+                  {formatSeconds(elapsedS)} decorridos ·{" "}
+                  {remainingS > 1
+                    ? `~${formatSeconds(remainingS)} restantes`
+                    : `finalizando (no máximo mais ${formatSeconds(Math.max(0, DEPTH_DEADLINE_S[depth] - elapsedS) + 2)})`}
+                </span>
+              </p>
+              <Progress value={progressPct} />
+              <p className="text-xs text-muted-foreground">
+                {sourcesDone}/{enabledSources.size} fontes responderam · tempo típico nesta profundidade: ~{formatSeconds(expectedS)} (limite{" "}
+                {DEPTH_DEADLINE_S[depth]}s)
               </p>
               <div className="flex flex-wrap gap-2">
                 {[...enabledSources].map((key) => {
@@ -533,11 +617,36 @@ export function DiscoveryWorkbench({
             onRefreshSource={(source) => response.searchId && void runSearch({}, { source, searchId: response.searchId })}
           />
 
+          <p className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <Info className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Encontrar uma empresa <strong>não</strong> a coloca no pipeline. Marque as que interessam e clique em{" "}
+              <strong>Enviar para o pipeline</strong>: as novas entram na etapa “Novo”; as que já estão no banco são só complementadas (nada é
+              sobrescrito). “no pipeline” = já está lá; “na base” = está no banco (ex.: importada da Receita) mas ainda não foi enviada.
+            </span>
+          </p>
+
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" disabled={importing || selectedCount === 0} onClick={importSelected}>
               {importing ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              Importar selecionadas {selectedCount ? `(${selectedCount})` : ""}
+              Enviar para o pipeline {selectedCount ? `(${selectedCount})` : ""}
             </Button>
+            {enriching ? (
+              <Button size="sm" variant="outline" onClick={stopEnrichment}>
+                <Square className="size-3.5" /> Parar enriquecimento
+              </Button>
+            ) : (
+              notEnriched > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void runEnrichment(response, results, true)}
+                  title="Consulta CNPJ (Receita, com sócios) e site oficial de todas as empresas ainda não enriquecidas"
+                >
+                  <Wand2 className="size-3.5" /> Enriquecer todas as restantes ({notEnriched})
+                </Button>
+              )
+            )}
             <Button size="sm" variant="outline" onClick={() => exportCsv(selectedCount ? results.filter((r) => selected.has(r.key)) : results)}>
               <Download className="size-3.5" /> Exportar CSV {selectedCount ? "(selecionadas)" : "(todas)"}
             </Button>
@@ -583,7 +692,7 @@ export function DiscoveryWorkbench({
 
       <div className="grid gap-4 md:grid-cols-2">
         <HistoryCard title="Buscas salvas" icon={<Star className="size-4" />} items={saved} empty="Nenhuma busca salva ainda." onRerun={(ctx) => void runSearch(ctx)} />
-        <HistoryCard title="Histórico recente" icon={<History className="size-4" />} items={history} empty="Nenhuma busca realizada ainda." onRerun={(ctx) => void runSearch(ctx)} />
+        <HistoryCard title="Histórico completo" icon={<History className="size-4" />} items={history} empty="Nenhuma busca realizada ainda." onRerun={(ctx) => void runSearch(ctx)} />
       </div>
     </div>
   );
@@ -611,16 +720,22 @@ function HistoryCard({
   empty: string;
   onRerun: (ctx: Partial<SearchContext>) => void;
 }) {
+  const [q, setQ] = useState("");
+  const shown = useMemo(() => {
+    const f = foldText(q);
+    return f ? items.filter((h) => foldText(`${h.name ?? ""} ${h.query_text ?? ""}`).includes(f)) : items;
+  }, [items, q]);
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="space-y-2">
         <CardTitle className="flex items-center gap-2 text-sm">
-          {icon} {title}
+          {icon} {title} <span className="font-normal text-muted-foreground">({items.length})</span>
         </CardTitle>
+        {items.length > 5 && <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filtrar histórico..." className="h-7" />}
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="max-h-[28rem] space-y-2 overflow-y-auto">
         {items.length === 0 && <p className="text-xs text-muted-foreground">{empty}</p>}
-        {items.map((h) => (
+        {shown.map((h) => (
           <div key={h.id} className="flex items-center justify-between gap-2 border-b pb-2 text-xs last:border-0">
             <div className="min-w-0">
               <Link href={`/discovery?search=${h.id}`} className="block truncate font-medium hover:underline">

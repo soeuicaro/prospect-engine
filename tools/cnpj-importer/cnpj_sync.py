@@ -528,7 +528,7 @@ def provenance(c: dict, month: str) -> dict:
     return {k: {"value": v, "source": f"cnpj_rfb_{month}", "confidence": "HIGH", "collected_at": now, "verified_at": now} for k, v in fields.items() if v}
 
 
-def write_supabase(companies: list[dict], socios: dict, qualificacoes: dict[str, str], cnaes_table: dict[str, str], month: str, label: str) -> dict:
+def write_supabase(companies: list[dict], socios: dict, qualificacoes: dict[str, str], cnaes_table: dict[str, str], month: str, label: str, to_pipeline: bool = False) -> dict:
     sb = Supabase()
     ws = sb.req("GET", "workspaces?select=id,name&limit=1")
     if not ws:
@@ -541,8 +541,13 @@ def write_supabase(companies: list[dict], socios: dict, qualificacoes: dict[str,
     except SystemExit:
         has_provenance = False
         log("  (migration 0011 não aplicada — gravando sem procedência por campo)")
-    stage = sb.req("GET", f"pipeline_stages?select=id&workspace_id=eq.{wid}&key=eq.NEW&limit=1")
-    stage_id = stage[0]["id"] if stage else None
+    # Imported companies are a prospecting BASE, not pipeline leads: they show up
+    # in Discovery ("Banco local") and only enter the pipeline when the user
+    # sends them there. --to-pipeline restores the old "everything in Novo".
+    stage_id = None
+    if to_pipeline:
+        stage = sb.req("GET", f"pipeline_stages?select=id&workspace_id=eq.{wid}&key=eq.NEW&limit=1")
+        stage_id = stage[0]["id"] if stage else None
     log(f"Workspace: {ws[0]['name']}")
 
     # Full CNAE table first (companies.cnae_primary has an FK to cnaes).
@@ -650,6 +655,7 @@ def main() -> None:
     p.add_argument("--output", help="Também gravar CSV")
     p.add_argument("--parallel", type=int, default=4, help="Downloads simultâneos (padrão 4)")
     p.add_argument("--keep-downloads", help="Pasta para guardar os .zip (reuso em outras cidades no mesmo mês)")
+    p.add_argument("--to-pipeline", action="store_true", help="Colocar as empresas novas direto no pipeline (etapa Novo). Padrão: só na base")
     p.add_argument("--dry-run", action="store_true", help="Não grava nada no banco; só mostra contagens")
     p.add_argument("--sample", action="store_true", help="Teste rápido: só 1 arquivo de Estabelecimentos e 1 de Empresas")
     a = p.parse_args()
@@ -744,7 +750,7 @@ def main() -> None:
         return
     if a.supabase:
         log("\n[3/3] Gravando no Supabase (sem sobrescrever dados existentes)")
-        res = write_supabase(companies, socios, qualificacoes, cnaes_table, month, label)
+        res = write_supabase(companies, socios, qualificacoes, cnaes_table, month, label, to_pipeline=a.to_pipeline)
         log(f"\nConcluído: {res['created']:,} criadas · {res['updated']:,} já existiam (atualizadas só no cadastral/vazios) · {res['contacts']:,} sócios")
         log("Agora rode a busca no Discovery — a fonte 'Banco local' vai trazer essas empresas.")
 

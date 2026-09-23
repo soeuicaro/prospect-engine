@@ -13,6 +13,7 @@ POST /api/discovery/search (NDJSON stream: phase / source / progress / done)
   → Industry Keyword Expansion (industries.ts: OSM tags / text terms / CNAEs per mode)
   → geocode in parallel (cache → Nominatim → Photon)            ← Overpass does NOT wait for it
   → sources in parallel, each isolated (throw/timeout = that source's status)
+        places_overture (Overture Maps, imported per city — tools/places-importer)
         local_db  ┐
         overpass  ├→ fallback chain on failure OR low yield (<20): overpass → nominatim → photon
         nominatim │
@@ -20,7 +21,10 @@ POST /api/discovery/search (NDJSON stream: phase / source / progress / done)
   → automatic keyword variations if still low (disclosed in diagnostics; never radius/CNAE/cities)
   → merge/dedup (merge.ts) → visible filters → rank → diagnostics + suggestions
   → persisted: discovery_searches, source_request_logs, source_health (breakers)
-Client then runs progressive enrichment: POST /api/discovery/enrich in batches of 5, top-ranked first.
+Client then runs progressive enrichment: POST /api/discovery/enrich in batches of 5, top-ranked first
+("Enriquecer todas as restantes" runs the same batches over every non-enriched row).
+City/UF inputs autocomplete from IBGE (`GET /api/geo/municipios`, memoized per server instance).
+Nothing enters the pipeline until the user selects rows and clicks "Enviar para o pipeline" (stage NEW).
 ```
 
 Global deadline per depth: FAST 20s, BALANCED 40s, DEEP 55s. At the deadline, in-flight sources are
@@ -47,6 +51,13 @@ BALANCED = all enabled free sources + enrichment of top N (default 50 in the UI)
 `SOURCE_DISABLED`, `SOURCE_CIRCUIT_OPEN`. Search outcome: `SUCCESS`, `SUCCESS_WITH_WARNINGS` (a source
 failed, others worked), `PARTIAL` (deadline, cancel, or a source returned partial data), `NO_RESULTS`
 (sources answered, nothing matched), `FAILED` (every source failed — "Tentar novamente" / "Ver status das fontes").
+
+## Base vs pipeline
+
+`companies` is the prospecting base (CNPJ import, CSV, manual). Only rows with `pipeline_stage_id`
+appear on the pipeline board. `cnpj_sync.py` inserts WITHOUT a stage (unless `--to-pipeline`);
+"Enviar para o pipeline" in Discovery sets stage NEW on new and on stage-less existing companies.
+Badges: "na base" (companyId, no stage) vs "no pipeline".
 
 ## Dedup (merge.ts)
 
@@ -86,7 +97,7 @@ Missing phone/website/Instagram/CNPJ is **never** a filter. Every removal is cou
 | Nominatim | 40/page (API max) × 3 pages per term | exclude_place_ids pagination |
 | Photon | 50 per term (no pagination in the API) | |
 | Local DB | range pages of 1000 up to 2000 | configurable |
-| UI page | 50 rows per page, client-side over the full list | discovery-results.tsx |
+| UI page | all rows by default (50/100/200/500 per page optional), client-side | discovery-results.tsx |
 
 ## Completeness / confidence / ranking
 
@@ -97,8 +108,8 @@ Discovery Quality Score = coverage·30% + avg completeness·35% + HIGH share·20
 
 ## Persistence
 
-`discovery_searches` (log / history / saved searches / cache; results kept 7 days after expiry unless
-saved), `source_request_logs` (every attempt, 30-day retention), `source_health` (breakers),
+`discovery_searches` (log / full history / saved searches / cache; results are kept forever so any past
+search can be reopened — `expires_at` only governs cache reuse), `source_request_logs` (every attempt, 30-day retention), `source_health` (breakers),
 `geocode_cache` (30 days). Migration: `supabase/migrations/0011_discovery_engine.sql`.
 Without it applied the search still works; history/cache/health just aren't saved.
 
