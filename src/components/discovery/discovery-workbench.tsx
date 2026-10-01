@@ -63,7 +63,7 @@ type SourceProgress = { status: SourceRunStatus; returned: number; durationMs: n
 const ENRICH_BATCH = 5;
 
 /** Mirrors DEPTH_DEADLINE_MS in lib/discovery/orchestrator.ts (hard ceiling per depth). */
-const DEPTH_DEADLINE_S: Record<SearchContext["depth"], number> = { FAST: 20, BALANCED: 40, DEEP: 55 };
+const DEPTH_DEADLINE_S: Record<SearchContext["depth"], number> = { FAST: 20, BALANCED: 45, DEEP: 85 };
 
 /** Expected search time: median of this workspace's past searches at the same depth, else ~60% of the ceiling. */
 function estimateSearchSeconds(history: HistoryItem[], depth: SearchContext["depth"]): number {
@@ -432,7 +432,7 @@ export function DiscoveryWorkbench({
               />
             </Field>
             <Field label="Meta de quantidade">
-              <Input type="number" min={1} max={6000} value={limit} onChange={(e) => setLimit(Number(e.target.value) || 500)} />
+              <Input type="number" min={1} max={10000} value={limit} onChange={(e) => setLimit(Number(e.target.value) || 500)} />
             </Field>
             <Field label="Palavras-chave extras (separe por vírgula)" className="md:col-span-3">
               <Input value={keywordsText} onChange={(e) => setKeywordsText(e.target.value)} placeholder="ex.: açaí, marmitaria" />

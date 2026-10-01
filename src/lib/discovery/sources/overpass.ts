@@ -28,7 +28,7 @@ import {
   type SourceEnv,
   type SourceSearchInput,
 } from "./base";
-import { osmAddressFields, osmCategory, osmContactFields, osmName, osmRecordId, osmUrl } from "./osm-common";
+import { osmAddressFields, osmCategory, osmCategoryKeys, osmContactFields, osmName, osmRecordId, osmUrl } from "./osm-common";
 
 export const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
@@ -224,6 +224,8 @@ export function parseOverpassElements(
       collectedAt: opts.collectedAt,
       name,
       category: osmCategory(tags),
+      categoryKeys: osmCategoryKeys(tags),
+      description: tags.description ?? null,
       ...osmAddressFields(tags),
       ...osmContactFields(tags),
       lat,

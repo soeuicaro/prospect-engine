@@ -35,6 +35,15 @@ export function osmCategory(tags: Tags): string | null {
   return null;
 }
 
+const CATEGORY_TAG_KEYS = ["amenity", "shop", "healthcare", "leisure", "tourism", "office", "craft", "club"];
+
+/** Every classifying tag, prefixed for segment matching: ["osm:amenity=restaurant", "osm:cuisine=pizza"]. */
+export function osmCategoryKeys(tags: Tags): string[] {
+  const out: string[] = [];
+  for (const key of CATEGORY_TAG_KEYS) if (tags[key]) out.push(`osm:${key}=${tags[key]}`);
+  return out;
+}
+
 export function osmContactFields(tags: Tags): Pick<SourceCompany, "phone" | "phones" | "whatsapp" | "email" | "website" | "socials"> {
   const phones = [
     ...splitPhones(tags.phone),

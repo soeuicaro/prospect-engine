@@ -27,7 +27,10 @@ export interface AppUser {
  */
 export const getOwnerUser = cache(async (): Promise<AppUser | null> => {
   const supabase = await createClient();
-  const { data } = await supabase.from("profiles").select("id, email").limit(1).maybeSingle();
+  const { data, error } = await supabase.from("profiles").select("id, email").limit(1).maybeSingle();
+  // Without this, an unreachable/paused Supabase project looks identical to
+  // "no profile row" — log the real cause so the server logs show it.
+  if (error) console.error("[workspace] falha ao ler `profiles`:", error.message, error.details ?? "");
   if (!data) return null;
   return { id: data.id, email: data.email ?? "" };
 });

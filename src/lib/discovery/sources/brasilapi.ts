@@ -29,6 +29,9 @@ interface BrasilApiCnpj {
   ddd_telefone_1?: string | null;
   ddd_telefone_2?: string | null;
   email?: string | null;
+  data_inicio_atividade?: string | null;
+  porte?: string | null;
+  opcao_pelo_mei?: boolean | null;
   qsa?: { nome_socio?: string | null; qualificacao_socio?: string | null }[] | null;
 }
 
@@ -39,6 +42,15 @@ export function formatCnae(raw: number | string | null | undefined): string | nu
 }
 
 const STATUS = new Set(["ATIVA", "SUSPENSA", "INAPTA", "BAIXADA", "NULA"]);
+
+/** "MICRO EMPRESA" → ME, "EMPRESA DE PEQUENO PORTE" → EPP, "DEMAIS" → DEMAIS (same codes as cnpj_sync.py). */
+export function porteOf(raw: string | null | undefined): string | null {
+  const p = (raw ?? "").toUpperCase();
+  if (p.includes("MICRO")) return "ME";
+  if (p.includes("PEQUENO")) return "EPP";
+  if (p.includes("DEMAIS")) return "DEMAIS";
+  return null;
+}
 
 export function brasilApiToPatch(data: BrasilApiCnpj): EnrichmentPatch["fields"] & { partners: { name: string; role: string | null }[] } {
   const status = (data.descricao_situacao_cadastral ?? "").toUpperCase();
@@ -57,6 +69,8 @@ export function brasilApiToPatch(data: BrasilApiCnpj): EnrichmentPatch["fields"]
     postcode: data.cep ?? null,
     phone: phone && phone.length >= 10 ? phone : null,
     email: data.email ? data.email.toLowerCase() : null,
+    openedAt: /^\d{4}-\d{2}-\d{2}$/.test(data.data_inicio_atividade ?? "") ? data.data_inicio_atividade! : null,
+    companySize: data.opcao_pelo_mei ? "MEI" : porteOf(data.porte),
     partners: (data.qsa ?? [])
       .filter((p) => p.nome_socio)
       .slice(0, 10)
@@ -83,8 +97,8 @@ export function createBrasilApiSource(): EnrichmentSource {
       supportsPagination: "none",
     },
     isConfigured: () => true,
-    // Companies synced from the RFB base already carry razão social + situação.
-    appliesTo: (c: UnifiedCompany) => Boolean(normalizeCnpj(c.cnpj)) && (!c.legalName || !c.cnpjStatus),
+    // Companies synced from the RFB base already carry razão social + situação + abertura.
+    appliesTo: (c: UnifiedCompany) => Boolean(normalizeCnpj(c.cnpj)) && (!c.legalName || !c.cnpjStatus || !c.openedAt),
 
     async enrich(company: UnifiedCompany, env: SourceEnv): Promise<EnrichmentPatch> {
       const started = Date.now();
@@ -109,7 +123,7 @@ export function createBrasilApiSource(): EnrichmentSource {
           env.http
         );
         const { partners, ...fields } = brasilApiToPatch(out.data);
-        return { source: "cnpj_brasilapi", status: "SOURCE_SUCCESS", fields, partners, message: null, logs: out.logs, durationMs: Date.now() - started };
+        return { source: "cnpj_brasilapi", status: "SOURCE_SUCCESS", fields, partners, verified: true, message: null, logs: out.logs, durationMs: Date.now() - started };
       } catch (err) {
         const { entry, logs } = errorEntry(err);
         const notFound = entry.httpStatus === 404;

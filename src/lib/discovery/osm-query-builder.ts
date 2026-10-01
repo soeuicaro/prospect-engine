@@ -120,7 +120,7 @@ function nameClauses(keywords: string[], filter: string): string[] {
 
 export function buildOverpassQuery(input: OsmQueryInput): string {
   const timeout = Math.min(60, Math.max(5, Math.round(input.timeoutSec ?? 25)));
-  const max = Math.min(2000, Math.max(1, Math.round(input.maxResults ?? 1000)));
+  const max = Math.min(10_000, Math.max(1, Math.round(input.maxResults ?? 5000)));
   const { prelude, filter } = locationFilter(input.location);
   const clauses = [...tagClauses(input.tags, filter), ...nameClauses(input.nameKeywords ?? [], filter)];
   if (!clauses.length) throw new OsmQueryError("Nenhuma tag ou palavra-chave para consultar no OSM");

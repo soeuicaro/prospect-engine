@@ -8,7 +8,7 @@ import { DISCOVERY_SOURCE_KEYS } from "./registry";
 import type { SearchContext, SourceKey } from "./types";
 
 /** Hard ceiling on unique results one search returns (documented, shown in debug). */
-export const SYSTEM_RESULT_LIMIT = 6000;
+export const SYSTEM_RESULT_LIMIT = 10_000;
 
 const sourceKeySchema = z.enum(["local_db", "places_overture", "osm_overpass", "osm_nominatim", "osm_photon", "cnpj_brasilapi", "website_discovery", "google_maps"]);
 

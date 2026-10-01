@@ -21,6 +21,7 @@ import type {
   SourceRunResult,
   SourceRunStatus,
   UnifiedCompany,
+  WebPresence,
 } from "../types";
 
 export interface SourceEnv {
@@ -57,8 +58,12 @@ export interface DiscoverySource extends SourceBase {
 export interface EnrichmentPatch {
   source: SourceKey;
   status: SourceRunStatus;
-  fields: Partial<Pick<SourceCompany, "legalName" | "tradeName" | "cnpjStatus" | "cnae" | "street" | "houseNumber" | "neighborhood" | "city" | "state" | "postcode" | "phone" | "email" | "website" | "whatsapp" | "socials">>;
+  fields: Partial<Pick<SourceCompany, "legalName" | "tradeName" | "cnpjStatus" | "cnae" | "street" | "houseNumber" | "neighborhood" | "city" | "state" | "postcode" | "phone" | "email" | "website" | "whatsapp" | "socials" | "openedAt" | "companySize">>;
   partners?: { name: string; role: string | null }[];
+  /** Homepage analysis summary (website source only). */
+  web?: WebPresence;
+  /** The source confirmed the business right now (registry answered / site is up). */
+  verified?: boolean;
   message: string | null;
   logs: RequestLog[];
   durationMs: number;
@@ -73,6 +78,8 @@ export interface EnrichmentSource extends SourceBase {
 export interface GeoSource {
   key: SourceKey;
   geocodeCity(city: string, state: string, env: SourceEnv): Promise<{ location: ResolvedLocation | null; logs: RequestLog[]; error: SourceRequestError | null }>;
+  /** Neighborhood (bairro) inside a city — used by the neighborhood filter. */
+  geocodeNeighborhood?(neighborhood: string, city: string, state: string, env: SourceEnv): Promise<{ location: ResolvedLocation | null; logs: RequestLog[]; error: SourceRequestError | null }>;
 }
 
 // ---------------------------------------------------------------------------

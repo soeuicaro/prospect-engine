@@ -265,8 +265,15 @@ export function compareKey(field: MergeField, value: string): string {
   }
 }
 
+/**
+ * Recency of the DATA, not of our fetch: a live OSM answer has
+ * collectedAt = now but says nothing about when the map was edited, so it
+ * earns no bonus unless the source states the data's age (dataAsOf).
+ */
 function recencyBonus(v: FieldValue, now: number): number {
-  const at = Date.parse(v.verifiedAt ?? v.collectedAt);
+  const stamp = v.verifiedAt ?? v.dataAsOf;
+  if (!stamp) return 0;
+  const at = Date.parse(stamp);
   if (!Number.isFinite(at)) return 0;
   const days = (now - at) / 86_400_000;
   if (days <= 30) return 2;
@@ -399,7 +406,14 @@ function buildUnified(members: Prepared[], priority: FieldPriority, now: number,
     for (const [field, value] of Object.entries(fieldValuesOf(m.rec)) as [MergeField, string | undefined][]) {
       if (!value || !String(value).trim()) continue;
       const list = candidates.get(field) ?? [];
-      list.push({ value: String(value).trim(), source: m.rec.source, confidence: m.rec.confidence, collectedAt: m.rec.collectedAt, verifiedAt: m.rec.verifiedAt ?? null });
+      list.push({
+        value: String(value).trim(),
+        source: m.rec.source,
+        confidence: m.rec.confidence,
+        collectedAt: m.rec.collectedAt,
+        verifiedAt: m.rec.verifiedAt ?? null,
+        dataAsOf: m.rec.dataAsOf ?? null,
+      });
       candidates.set(field, list);
     }
   }
@@ -496,10 +510,44 @@ function buildUnified(members: Prepared[], priority: FieldPriority, now: number,
     inPipeline: members.some((m) => m.rec.inPipeline),
     enrichment: { state: "PENDING", sources: [] },
     warnings,
+    ...qualificationInputs(members.map((m) => m.rec)),
   };
   if (cnpjStatus && cnpjStatus !== "ATIVA") unified.warnings.push(`Situação cadastral: ${cnpjStatus}`);
   refreshDerived(unified);
   return unified;
+}
+
+const firstOf = <T,>(recs: SourceCompany[], pick: (r: SourceCompany) => T | null | undefined): T | null => {
+  for (const r of recs) {
+    const v = pick(r);
+    if (v != null && v !== "") return v;
+  }
+  return null;
+};
+
+const extremeIso = (values: (string | null | undefined)[], dir: "min" | "max"): string | null => {
+  const ts = values.map((v) => (v ? Date.parse(v) : NaN)).filter(Number.isFinite);
+  if (!ts.length) return null;
+  return new Date(dir === "min" ? Math.min(...ts) : Math.max(...ts)).toISOString();
+};
+
+/** Fields the lead-qualification layer reads (members are already in source-priority order). */
+function qualificationInputs(recs: SourceCompany[]): Partial<UnifiedCompany> {
+  // Any member saying "closed" wins over silence — a closed business is not a lead.
+  const closed = recs.map((r) => r.operatingStatus).find((s) => s && s !== "open");
+  return {
+    cnae: firstOf(recs, (r) => r.cnae),
+    categoryKeys: [...new Set(recs.flatMap((r) => r.categoryKeys ?? []))],
+    openedAt: firstOf(recs, (r) => r.openedAt),
+    companySize: firstOf(recs, (r) => r.companySize),
+    operatingStatus: closed ?? firstOf(recs, (r) => r.operatingStatus),
+    description: firstOf(recs, (r) => r.description),
+    openingHours: firstOf(recs, (r) => r.openingHours),
+    firstSeenAt: extremeIso(recs.map((r) => r.firstSeenAt ?? r.collectedAt), "min"),
+    lastSeenAt: extremeIso(recs.map((r) => r.collectedAt), "max"),
+    lastVerifiedAt: extremeIso(recs.map((r) => r.verifiedAt), "max"),
+    dataAsOf: extremeIso(recs.map((r) => r.dataAsOf), "max"),
+  };
 }
 
 function mergeContacts(recs: SourceCompany[]): UnifiedCompany["contacts"] {

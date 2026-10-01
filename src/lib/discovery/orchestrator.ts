@@ -21,6 +21,8 @@ import type { HttpDeps } from "./http";
 import { expandIndustry, formatOsmTag, getIndustry, type IndustryDefinition, type IndustryExpansion } from "./industries";
 import { mergeSourceCompanies, citiesCompatible } from "./merge";
 import { foldText, inBbox } from "./normalize";
+import { DEFAULT_ICP, ICP_INDUSTRY_KEY, type IcpConfig } from "./qualification/icp";
+import { qualifyAll, summarizeQualification } from "./qualification/qualify";
 import { getSourceDefinition, PRIMARY_DISCOVERY_SOURCES, type FieldPriority, type SourceConfigMap } from "./registry";
 import type { DiscoverySource, GeoSource, SourceEnv } from "./sources/base";
 import { userMessageFor } from "./sources/base";
@@ -40,7 +42,7 @@ import {
   type UnifiedCompany,
 } from "./types";
 
-export const DEPTH_DEADLINE_MS: Record<SearchContext["depth"], number> = { FAST: 20_000, BALANCED: 40_000, DEEP: 55_000 };
+export const DEPTH_DEADLINE_MS: Record<SearchContext["depth"], number> = { FAST: 20_000, BALANCED: 45_000, DEEP: 85_000 };
 /** Below this many unique results the engine tries fallbacks / variations. */
 export const LOW_RESULT_THRESHOLD = 20;
 /** How long aborted sources get to hand back partial results. */
@@ -59,6 +61,10 @@ export interface OrchestratorDeps {
   http?: HttpDeps;
   fieldPriority?: FieldPriority;
   customIndustry?: IndustryDefinition | null;
+  /** Overture categories for a composite (ICP) search. */
+  overtureCategories?: string[] | null;
+  /** Ideal Customer Profile for qualification/scoring (default: DEFAULT_ICP). */
+  icp?: IcpConfig;
   geocodeCache?: GeocodeCache;
   emit?: (event: SearchStreamEvent) => void;
   signal?: AbortSignal;
@@ -130,7 +136,12 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
       includeRelatedCnaes: ctx.includeRelatedCnaes,
       expandKeywords: ctx.expandKeywords,
     });
-    const expansion: IndustryExpansion = { ...baseExpansion, cnaes: [...new Set([...baseExpansion.cnaes, ...ctx.cnaes])] };
+    const expansion: IndustryExpansion = {
+      ...baseExpansion,
+      cnaes: [...new Set([...baseExpansion.cnaes, ...ctx.cnaes])],
+      overtureCategories: deps.overtureCategories ?? null,
+    };
+    const icp = deps.icp ?? DEFAULT_ICP;
 
     // ---- source selection -----------------------------------------------
     const allowed = (key: SourceKey) => {
@@ -205,6 +216,30 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
 
     const needsGeo = (key: SourceKey) => Boolean(deps.sources[key]?.requiresLocation);
 
+    // Neighborhood areas (bairros) for the neighborhood filter — cached like city geocodes.
+    const resolveNeighborhoods = async (): Promise<NeighborhoodArea[]> => {
+      const geo = deps.geoSources.find((g) => g.geocodeNeighborhood && deps.configs[g.key]?.enabled);
+      const out: NeighborhoodArea[] = [];
+      for (const name of ctx.neighborhoods.slice(0, 10)) {
+        if (controller.signal.aborted) break;
+        const key = `geo:v1:bairro:${foldText(name)}:${foldText(ctx.city)}:${ctx.state}`;
+        const cached = await deps.geocodeCache?.get(key).catch(() => undefined);
+        if (cached) {
+          out.push({ name, location: cached, source: "cache" });
+          continue;
+        }
+        if (!geo || !deps.breakers.canRequest(`${geo.key}:geocode`)) {
+          out.push({ name, location: null, source: null });
+          continue;
+        }
+        const r = await geo.geocodeNeighborhood!(name, ctx.city, ctx.state, geoEnvFor(geo.key));
+        geoLogs = [...geoLogs, ...r.logs];
+        if (r.location) await deps.geocodeCache?.set(key, r.location).catch(() => undefined);
+        out.push({ name, location: r.location, source: r.location ? geo.key : null });
+      }
+      return out;
+    };
+
     const uniqueSoFar = () => mergeSourceCompanies([...runs.values()].flatMap((r) => r.results), { targetCity: ctx.city }).companies.length;
 
     const runSource = async (key: SourceKey, isFallback: boolean, overrideExpansion?: IndustryExpansion): Promise<SourceRunResult> => {
@@ -276,6 +311,7 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
     // Start geocoding right away (in parallel) — text sources, the city-area
     // filter and radius searches all use it; Overpass area queries don't wait for it.
     if ([...primary, ...fallbackPool].length) void resolveLocation();
+    const neighborhoodPromise = ctx.neighborhoods.length ? resolveNeighborhoods() : Promise.resolve([] as NeighborhoodArea[]);
     for (const key of primary) void launch(key, false);
 
     // Wait until no new work is scheduled (fallbacks may add more), bounded by the deadline.
@@ -379,6 +415,34 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
     );
     applyFilter("low_confidence", "Confiança baixa (modo Preciso)", ctx.mode === "PRECISE", (c) => c.confidence === "LOW");
 
+    // ---- neighborhoods (bairros) -------------------------------------------
+    const areas = ctx.neighborhoods.length
+      ? await Promise.race([
+          neighborhoodPromise,
+          new Promise<NeighborhoodArea[]>((r) => setTimeout(() => r([]), Math.max(0, Math.min(10_000, deadline - now())))),
+        ])
+      : [];
+    const hoods = ctx.neighborhoods.map(foldText).filter(Boolean);
+    applyFilter(
+      "neighborhood",
+      `Fora dos bairros: ${ctx.neighborhoods.join(", ")} (pelo bairro do endereço ou coordenadas)`,
+      hoods.length > 0,
+      (c) => !inNeighborhoods(c, hoods, areas)
+    );
+
+    // ---- qualification + validation (visible filters, never silent) -------
+    emit({ type: "phase", status: "SCORING", message: "Qualificando leads (ICP, sinais, score)..." });
+    const searchIndustry = ctx.industryKey && ctx.industryKey !== ICP_INDUSTRY_KEY && ctx.industryKey !== "todas" ? ctx.industryKey : null;
+    qualifyAll(merged.companies, { icp, now: now(), searchIndustry });
+    const discarded: UnifiedCompany[] = [];
+    for (const [rule, label] of VALIDATION_FILTERS) {
+      applyFilter(`validation:${rule}`, label, true, (c) => {
+        const hit = c.lead?.disqualified?.rule === rule;
+        if (hit) discarded.push(c);
+        return hit;
+      });
+    }
+
     let results = merged.companies.filter((c) => !removedKeys.has(c.key));
     const hitSystemLimit = results.length > SYSTEM_RESULT_LIMIT;
 
@@ -389,7 +453,7 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
         ? a.name.localeCompare(b.name, "pt-BR")
         : ctx.sort === "completeness"
           ? b.completeness - a.completeness || b.rankScore - a.rankScore
-          : b.rankScore - a.rankScore || b.completeness - a.completeness
+          : (b.lead?.leadScore ?? 0) - (a.lead?.leadScore ?? 0) || b.rankScore - a.rankScore || b.completeness - a.completeness
     );
     if (hitSystemLimit) results = results.slice(0, SYSTEM_RESULT_LIMIT);
     const enrichBudget = ctx.depth === "FAST" ? 0 : ctx.depth === "DEEP" ? Math.max(ctx.autoEnrichTop, 50) : ctx.autoEnrichTop;
@@ -399,6 +463,7 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
 
     // ---- metrics ----------------------------------------------------------
     const finalKeys = new Set(results.map((c) => c.key));
+    const qualifiedKeys = new Set(results.filter((c) => c.lead?.qualified).map((c) => c.key));
     const funnel: SourceFunnelMetrics[] = allRuns.map((run) => {
       const idxStart = records.indexOf(run.results[0]);
       const memberKeys = run.results.map((_, i) => merged.clusterOf.get(idxStart + i)!).filter(Boolean);
@@ -414,6 +479,7 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
         duplicate: Math.max(0, per.members - per.primary),
         filtered: memberKeys.filter((k) => removedKeys.has(k)).length,
         accepted: new Set(memberKeys.filter((k) => finalKeys.has(k))).size,
+        qualified: new Set(memberKeys.filter((k) => qualifiedKeys.has(k))).size,
         enriched: 0,
         durationMs: run.metadata.durationMs,
         attempts: run.metadata.attempts,
@@ -519,11 +585,19 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
         lowResultReasons,
         deadlineHit,
         cancelled,
+        discardedSample: discarded.slice(0, 200).map((c) => ({
+          name: c.name,
+          sources: c.sourceKeys,
+          rule: c.lead!.disqualified!.rule,
+          reason: c.lead!.disqualified!.reason,
+        })),
+        neighborhoodAreas: areas.map((a) => ({ name: a.name, resolved: Boolean(a.location), source: a.source })),
       },
       suggestions,
       userMessages: [...new Set(userMessages)],
       coverage: { requested: ctx.limit, found: results.length, percent: coveragePct },
       qualityScore,
+      qualification: summarizeQualification(results, discarded, icp),
       durationMs: now() - started,
       createdAt: new Date(started).toISOString(),
     };
@@ -532,6 +606,23 @@ export async function runDiscovery(ctx: SearchContext, deps: OrchestratorDeps): 
     clearTimeout(deadlineTimer);
     deps.signal?.removeEventListener("abort", onOuterAbort);
   }
+}
+
+type NeighborhoodArea = { name: string; location: ResolvedLocation | null; source: string | null };
+
+const VALIDATION_FILTERS: [rule: string, label: string][] = [
+  ["closed", "Fechado (fonte indica fechado ou CNPJ baixado/inapto)"],
+  ["excluded", "Fora do ICP (segmento/categoria excluídos, órgão público)"],
+  ["generic_name", "Nome genérico (não identifica um negócio)"],
+  ["insufficient_data", "Sem dados mínimos (nenhum contato e nenhum endereço)"],
+];
+
+/** In one of the requested bairros: by the address's neighborhood, or by coordinates inside a geocoded bairro. */
+export function inNeighborhoods(c: UnifiedCompany, hoods: string[], areas: NeighborhoodArea[]): boolean {
+  const n = foldText(c.neighborhood);
+  if (n && hoods.some((h) => n.includes(h) || h.includes(n))) return true;
+  if (c.lat == null || c.lon == null) return false;
+  return areas.some((a) => a.location?.bbox && inBbox({ lat: c.lat!, lon: c.lon! }, a.location.bbox, 0.003));
 }
 
 /** Source run summary for the response: records/logs travel separately. */

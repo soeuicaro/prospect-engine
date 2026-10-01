@@ -13,6 +13,9 @@ import { computeCacheKey, normalizeSearchContext } from "./context";
 import { enrichCompanies, type EnrichOutput } from "./enrich";
 import { expansionForCustomIndustry, getIndustry, type IndustryDefinition } from "./industries";
 import { mergeSourceCompanies } from "./merge";
+import { ICP_INDUSTRY_KEY, ICP_SETTING_KEY, resolveIcp, type IcpConfig } from "./qualification/icp";
+import { buildIcpSearch } from "./qualification/icp-search";
+import { qualifyAll, requalify, summarizeQualification } from "./qualification/qualify";
 import { runDiscovery } from "./orchestrator";
 import { DISCOVERY_SOURCE_KEYS, type FieldPriority, type SourceConfigMap } from "./registry";
 import type { DiscoverySource, EnrichmentSource } from "./sources/base";
@@ -43,6 +46,7 @@ import type { SearchContext, SearchResponse, SearchStreamEvent, SourceCompany, S
 type Client = SupabaseClient<Database>;
 
 export interface DiscoveryRuntime {
+  icp: IcpConfig;
   configs: SourceConfigMap;
   fieldPriority: FieldPriority;
   breakers: BreakerRegistry;
@@ -51,9 +55,10 @@ export interface DiscoveryRuntime {
 }
 
 export async function loadRuntime(supabase: Client, workspace: Workspace): Promise<DiscoveryRuntime> {
-  const [{ configs, fieldPriority }, breakers] = await Promise.all([
+  const [{ configs, fieldPriority }, breakers, icp] = await Promise.all([
     loadDiscoveryConfig(supabase, workspace.id),
     loadBreakers(supabase, workspace.id),
+    loadIcp(supabase, workspace.id),
   ]);
   // The legacy OSM_DISCOVERY flag still switches off every OSM-based source.
   if (workspace.feature_flags.OSM_DISCOVERY === false) {
@@ -61,6 +66,7 @@ export async function loadRuntime(supabase: Client, workspace: Workspace): Promi
   }
   if (workspace.feature_flags.WEB_ANALYSIS === false) configs.website_discovery = { ...configs.website_discovery, enabled: false };
   return {
+    icp,
     configs,
     fieldPriority,
     breakers,
@@ -73,6 +79,12 @@ export async function loadRuntime(supabase: Client, workspace: Workspace): Promi
     },
     enrichmentSources: [createBrasilApiSource(), createWebsiteSource({ analyze: analyzeWebsite })],
   };
+}
+
+/** Workspace ICP (settings `discovery.icp`) over the default. Invalid overrides fall back to the default. */
+export async function loadIcp(supabase: Client, workspaceId: string): Promise<IcpConfig> {
+  const { data } = await supabase.from("settings").select("value").eq("workspace_id", workspaceId).eq("key", ICP_SETTING_KEY).maybeSingle();
+  return resolveIcp(data?.value ?? null).icp;
 }
 
 /** Map a workspace industry row to a catalog entry (by slug) or a custom definition. */
@@ -116,7 +128,15 @@ export async function executeSearch(input: ExecuteSearchInput): Promise<SearchRe
     const cached = await findCachedSearch(supabase, workspace.id, cacheKey).catch(() => null);
     if (cached && (cached.results as unknown[]).length) {
       emit({ type: "phase", status: "COMPLETED", message: "Resultado recente encontrado em cache." });
-      return rowToResponse(cached);
+      const response = rowToResponse(cached);
+      // Searches cached before lead qualification existed: qualify on read (nothing is re-fetched).
+      if (response.results.some((c) => !c.lead)) {
+        const searchIndustry = ctx.industryKey && ctx.industryKey !== ICP_INDUSTRY_KEY && ctx.industryKey !== "todas" ? ctx.industryKey : null;
+        qualifyAll(response.results, { icp: runtime.icp, searchIndustry });
+        response.results.sort((a, b) => (b.lead?.leadScore ?? 0) - (a.lead?.leadScore ?? 0));
+        response.qualification = summarizeQualification(response.results.filter((c) => !c.lead?.disqualified), response.results.filter((c) => c.lead?.disqualified), runtime.icp);
+      }
+      return response;
     }
   }
 
@@ -132,6 +152,7 @@ export async function executeSearch(input: ExecuteSearchInput): Promise<SearchRe
   }
 
   const searchId = await createSearchRow(supabase, { workspaceId: workspace.id, userId: input.userId, cacheKey, context: ctx }).catch(() => null);
+  const icpPlan = ctx.industryKey === ICP_INDUSTRY_KEY ? buildIcpSearch(runtime.icp, ctx.mode) : null;
 
   try {
     const { response, logs, geoLogs } = await runDiscovery(effectiveCtx, {
@@ -140,7 +161,9 @@ export async function executeSearch(input: ExecuteSearchInput): Promise<SearchRe
       configs: runtime.configs,
       breakers: runtime.breakers,
       fieldPriority: runtime.fieldPriority,
-      customIndustry: custom,
+      customIndustry: icpPlan?.industry ?? custom,
+      overtureCategories: icpPlan?.overtureCategories ?? null,
+      icp: runtime.icp,
       geocodeCache: geocodeCacheFor(supabase),
       emit,
       signal: input.signal,
@@ -152,9 +175,13 @@ export async function executeSearch(input: ExecuteSearchInput): Promise<SearchRe
         targetCity: ctx.city,
         fieldPriority: runtime.fieldPriority,
       });
-      response.results = remerged.companies.sort((a, b) => b.rankScore - a.rankScore);
+      const searchIndustry = ctx.industryKey && ctx.industryKey !== ICP_INDUSTRY_KEY && ctx.industryKey !== "todas" ? ctx.industryKey : null;
+      qualifyAll(remerged.companies, { icp: runtime.icp, searchIndustry });
+      const kept = remerged.companies.filter((c) => !c.lead?.disqualified);
+      response.results = kept.sort((a, b) => (b.lead?.leadScore ?? 0) - (a.lead?.leadScore ?? 0) || b.rankScore - a.rankScore);
       response.context = ctx;
       response.counts = { ...response.counts, final: response.results.length };
+      response.qualification = summarizeQualification(kept, remerged.companies.filter((c) => c.lead?.disqualified), runtime.icp);
     }
 
     response.searchId = searchId;
@@ -189,6 +216,16 @@ export function unifiedToRecord(u: UnifiedCompany): SourceCompany {
       .map((s) => `osm:${s.recordId}`),
     hasDecisionMaker: u.hasDecisionMaker,
     contacts: u.contacts?.map((c) => ({ name: c.name, role: c.role })),
+    cnae: u.cnae ?? null,
+    categoryKeys: u.categoryKeys ?? [],
+    openedAt: u.openedAt ?? null,
+    companySize: u.companySize ?? null,
+    operatingStatus: u.operatingStatus ?? null,
+    description: u.description ?? null,
+    openingHours: u.openingHours ?? null,
+    firstSeenAt: u.firstSeenAt ?? null,
+    verifiedAt: u.lastVerifiedAt ?? null,
+    dataAsOf: u.dataAsOf ?? null,
     inPipeline: u.inPipeline,
     name: u.name,
     legalName: u.legalName,
@@ -230,12 +267,24 @@ export async function executeEnrichment(input: {
     signal: input.signal,
     deadlineMs: 25_000,
   });
+  // New evidence (site up, video on the homepage, opening date) changes the score — and its explanation.
+  const searchIndustry = await searchIndustryOf(input.supabase, input.workspace.id, input.searchId);
+  for (const c of out.companies) {
+    requalify(c, { icp: runtime.icp, searchIndustry });
+  }
   await Promise.all([
     persistBreakers(input.supabase, input.workspace.id, runtime.breakers),
     insertRequestLogs(input.supabase, input.workspace.id, input.searchId, out.logs),
     input.searchId ? mergeEnrichedIntoSearch(input.supabase, input.workspace.id, input.searchId, out.companies) : null,
   ]).catch(() => undefined);
   return out;
+}
+
+async function searchIndustryOf(supabase: Client, workspaceId: string, searchId: string | null): Promise<string | null> {
+  if (!searchId) return null;
+  const row = await getSearchRow(supabase, workspaceId, searchId).catch(() => null);
+  const key = (row?.context as { industryKey?: string | null } | undefined)?.industryKey ?? null;
+  return key && key !== ICP_INDUSTRY_KEY && key !== "todas" ? key : null;
 }
 
 async function mergeEnrichedIntoSearch(supabase: Client, workspaceId: string, searchId: string, enriched: UnifiedCompany[]) {

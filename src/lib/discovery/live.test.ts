@@ -3,7 +3,7 @@ import { it } from "vitest";
 /**
  * LIVE end-to-end check against the real public OSM services (no DB).
  * Opt-in only — it hits external APIs:  DISCOVERY_LIVE=1 npx vitest run src/lib/discovery/live.test.ts
- * Optional: DMODE=BROAD|BALANCED|PRECISE
+ * Optional: DMODE=BROAD|BALANCED|PRECISE, DINDUSTRY=<catalog key> (default restaurante), DCITY=Cidade/UF
  */
 import { BreakerRegistry } from "./circuit-breaker";
 import { normalizeSearchContext } from "./context";
@@ -14,7 +14,8 @@ import { createOverpassSource } from "./sources/overpass";
 import { createPhotonSource, photonGeo } from "./sources/photon";
 
 it.skipIf(!process.env.DISCOVERY_LIVE)("LIVE Sobral restaurantes", async () => {
-  const ctx = normalizeSearchContext({ city: "Sobral", state: "CE", industryKey: "restaurante", sourcesEnabled: ["osm_overpass", "osm_nominatim", "osm_photon"], mode: process.env.DMODE ?? "BALANCED" });
+  const [city, state] = (process.env.DCITY ?? "Sobral/CE").split("/");
+  const ctx = normalizeSearchContext({ city, state, industryKey: process.env.DINDUSTRY ?? "restaurante", sourcesEnabled: ["osm_overpass", "osm_nominatim", "osm_photon"], mode: process.env.DMODE ?? "BALANCED" });
   const breakers = new BreakerRegistry();
   const t0 = Date.now();
   const { response, logs, geoLogs } = await runDiscovery(ctx, {
@@ -37,4 +38,4 @@ it.skipIf(!process.env.DISCOVERY_LIVE)("LIVE Sobral restaurantes", async () => {
   const errs = [...geoLogs, ...logs].filter(l => l.errorKind);
   console.log("request errors", errs.map(l => `${l.source} ${l.endpoint} ${l.httpStatus} ${l.errorKind} ${l.attempt}/${l.maxAttempts} ${l.latencyMs}ms`));
   console.log("total requests", logs.length + geoLogs.length);
-}, 120000);
+}, 150000);

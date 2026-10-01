@@ -118,6 +118,7 @@ export function photonFeatureToCompany(f: PhotonFeature, term: string): SourceCo
     collectedAt: new Date().toISOString(),
     name: p.name,
     category: `${p.osm_key}=${p.osm_value}`,
+    categoryKeys: [`osm:${p.osm_key}=${p.osm_value}`],
     street: p.street ?? null,
     houseNumber: p.housenumber ?? null,
     neighborhood: p.district ?? p.locality ?? null,

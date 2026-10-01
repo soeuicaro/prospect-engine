@@ -111,6 +111,23 @@ export function toResolvedLocation(place: NominatimPlace, uf: string): ResolvedL
 
 export const nominatimGeo: GeoSource = {
   key: "osm_nominatim",
+  async geocodeNeighborhood(neighborhood, city, uf, env) {
+    try {
+      const out = await nominatimRequest(env, "/search", {
+        q: `${neighborhood}, ${city}, ${UF_NAMES[uf] ?? uf}, Brasil`,
+        format: "jsonv2",
+        addressdetails: "1",
+        limit: "5",
+      });
+      const place = pickNeighborhood(out.data, neighborhood, city);
+      if (!place) return { location: null, logs: out.logs, error: null };
+      const loc = toResolvedLocation(place, uf);
+      return { location: { ...loc, city, displayName: place.display_name }, logs: out.logs, error: null };
+    } catch (err) {
+      const { logs } = errorEntry(err);
+      return { location: null, logs, error: err instanceof SourceRequestError ? err : null };
+    }
+  },
   async geocodeCity(city, uf, env) {
     try {
       const out = await nominatimRequest(env, "/search", {
@@ -130,6 +147,23 @@ export const nominatimGeo: GeoSource = {
   },
 };
 
+const NEIGHBORHOOD_TYPES = new Set(["suburb", "neighbourhood", "quarter", "city_district", "borough", "residential", "district"]);
+
+/** Best neighborhood match inside the city (bbox) — or null when Nominatim only knows the city itself. */
+export function pickNeighborhood(places: NominatimPlace[], neighborhood: string, city: string): NominatimPlace | null {
+  const target = foldText(neighborhood);
+  const cityF = foldText(city);
+  const candidates = places.filter((p) => {
+    const type = p.addresstype ?? p.type;
+    const inCity = foldText(p.display_name).includes(cityF);
+    const nm = foldText(p.name ?? p.display_name.split(",")[0]);
+    const named = Boolean(nm) && (nm.includes(target) || target.includes(nm));
+    return inCity && named && NEIGHBORHOOD_TYPES.has(type);
+  });
+  candidates.sort((a, b) => (b.osm_type === "relation" ? 1 : 0) - (a.osm_type === "relation" ? 1 : 0));
+  return candidates[0] ?? null;
+}
+
 export function nominatimPlaceToCompany(p: NominatimPlace, term: string): SourceCompany | null {
   const category = p.category ?? p.class ?? "";
   if (!POI_CATEGORIES.has(category)) return null;
@@ -145,6 +179,8 @@ export function nominatimPlaceToCompany(p: NominatimPlace, term: string): Source
     collectedAt: new Date().toISOString(),
     name,
     category: osmCategory({ [category]: p.type, cuisine: extratags.cuisine }),
+    categoryKeys: [`osm:${category}=${p.type}`],
+    description: extratags.description ?? null,
     street: a.road ?? a.pedestrian ?? null,
     houseNumber: a.house_number ?? null,
     neighborhood: a.suburb ?? a.neighbourhood ?? a.quarter ?? null,

@@ -4,8 +4,8 @@ import { SearchValidationError } from "@/lib/discovery/context";
 import { executeSearch } from "@/lib/discovery/service";
 import type { SearchStreamEvent, SourceKey } from "@/lib/discovery/types";
 
-// Longest search depth (DEEP) has a 55s deadline; leave headroom for merge/persist.
-export const maxDuration = 90;
+// Longest search depth (DEEP) has an 85s deadline; leave headroom for merge/persist.
+export const maxDuration = 120;
 
 /**
  * POST /api/discovery/search — runs one discovery search and streams

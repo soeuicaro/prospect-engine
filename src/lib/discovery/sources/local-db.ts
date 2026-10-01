@@ -35,7 +35,7 @@ export function buildNicheOrFilter(opts: { industryId: string | null; cnaes: str
     // that also runs a lanchonete) — the RFB base lists them all.
     parts.push(`cnae_secondary.ov.{${cnaes.map((c) => `"${c}"`).join(",")}}`);
   }
-  for (const raw of opts.keywords.slice(0, 10)) {
+  for (const raw of opts.keywords.slice(0, 20)) {
     const kw = sanitizeForPostgrest(raw);
     if (kw.length < 3) continue;
     parts.push(`trade_name.ilike.*${kw}*`, `legal_name.ilike.*${kw}*`);
@@ -71,6 +71,10 @@ interface LocalRow {
   whatsapp: string | null;
   last_verified_at: string | null;
   updated_at: string;
+  created_at?: string | null;
+  opened_at?: string | null;
+  estimated_size?: string | null;
+  official_size?: { value?: string | null } | null;
   pipeline_stage_id: string | null;
   company_sources: { source_type: string; source_record_id: string | null }[] | null;
   company_social_profiles: { channel: string; handle_or_url: string | null; status: string }[] | null;
@@ -98,6 +102,11 @@ export function localRowToCompany(row: LocalRow, matchedBy: SourceCompany["match
     sourceUrl: null,
     collectedAt: row.updated_at,
     verifiedAt: row.last_verified_at,
+    firstSeenAt: row.created_at ?? null,
+    dataAsOf: row.updated_at,
+    openedAt: row.opened_at ?? null,
+    // Registry porte (RFB) beats the workspace's own estimate.
+    companySize: row.official_size?.value ?? row.estimated_size ?? null,
     companyId: row.id,
     inPipeline: Boolean(row.pipeline_stage_id),
     originSourceTypes: origins,
@@ -179,7 +188,7 @@ export function createLocalDbSource(deps: { supabase: SupabaseClient<Database>; 
           .from("companies")
           .select(
             `id, trade_name, legal_name, cnpj, cnpj_status, cnae_primary, cnae_secondary, industry_id, street, street_number, neighborhood,
-             city, state, postal_code, latitude, longitude, phone, email, website, whatsapp, last_verified_at, updated_at, pipeline_stage_id,
+             city, state, postal_code, latitude, longitude, phone, email, website, whatsapp, last_verified_at, updated_at, created_at, opened_at, estimated_size, official_size, pipeline_stage_id,
              company_sources(source_type, source_record_id), company_social_profiles(channel, handle_or_url, status),
              company_contacts(name, role, contact_type)`
           )

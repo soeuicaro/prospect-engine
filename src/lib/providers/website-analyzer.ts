@@ -1,5 +1,6 @@
 import "server-only";
 import { isPathAllowed } from "./robots";
+import { detectVideo, extractContacts, opportunityHints } from "./website-extract";
 
 /**
  * Lightweight, polite website analyzer. Fetches exactly one page (the
@@ -27,6 +28,12 @@ export interface WebsiteAnalysisResult {
   whatsapp: string | null;
   socialLinks: Partial<Record<"instagram" | "facebook" | "tiktok" | "youtube" | "linkedin", string>>;
   contentHash: string;
+  /** Video the homepage itself carries (embeds/players/links to videos). */
+  video?: { hasVideo: boolean; platforms: string[] };
+  /** Launch/event/booking words in the visible text. */
+  opportunityHints?: string[];
+  /** "link" = published as mailto:/tel:, "text" = found in visible text. */
+  contactOrigin?: { email: "link" | "text" | null; phone: "link" | "text" | null };
 }
 
 const SOCIAL_PATTERNS: { key: "instagram" | "facebook" | "tiktok" | "youtube" | "linkedin"; pattern: RegExp }[] = [
@@ -95,9 +102,8 @@ export async function analyzeWebsite(rawUrl: string): Promise<WebsiteAnalysisRes
 
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
   const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i);
-  const phoneMatch = html.match(/(?:\+?55\s?)?\(?\d{2}\)?[\s.-]?9?\d{4}[\s.-]?\d{4}/);
-  const emailMatch = html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  const whatsappMatch = html.match(/(?:wa\.me\/|whatsapp\.com\/send\?phone=)(\d+)/i);
+  const contacts = extractContacts(html);
+  const video = detectVideo(html);
 
   const socialLinks: WebsiteAnalysisResult["socialLinks"] = {};
   // First link per network that is a PROFILE — share buttons, posts and
@@ -116,7 +122,8 @@ export async function analyzeWebsite(rawUrl: string): Promise<WebsiteAnalysisRes
   const hasBlog = /href=["'][^"']*(blog|noticias|artigos)[^"']*["']/i.test(html);
 
   if (!hasContactPage) flags.push("NO_CONTACT_PAGE");
-  if (!whatsappMatch) flags.push("NO_WHATSAPP");
+  if (!contacts.whatsapp) flags.push("NO_WHATSAPP");
+  if (!video.hasVideo) flags.push("NO_VIDEO_ON_HOMEPAGE");
   if (Object.keys(socialLinks).length === 0) flags.push("NO_SOCIAL_LINKS", "MISSING_SOCIAL");
   if (!hasCta) flags.push("MISSING_CTA");
   if (!hasBlog) flags.push("LOW_CONTENT_SIGNAL");
@@ -143,11 +150,14 @@ export async function analyzeWebsite(rawUrl: string): Promise<WebsiteAnalysisRes
     hasBlog,
     title: titleMatch?.[1]?.trim().slice(0, 200) ?? null,
     description: descMatch?.[1]?.trim().slice(0, 500) ?? null,
-    phone: phoneMatch?.[0] ?? null,
-    email: emailMatch?.[0] ?? null,
-    whatsapp: whatsappMatch?.[1] ?? null,
+    phone: contacts.phone,
+    email: contacts.email,
+    whatsapp: contacts.whatsapp,
     socialLinks,
     contentHash,
+    video,
+    opportunityHints: opportunityHints(html),
+    contactOrigin: contacts.origin,
   };
 }
 

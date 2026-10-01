@@ -180,6 +180,23 @@ export interface SourceCompany {
   matchedBy: "tag" | "name_keyword" | "text_search" | "industry" | "cnae" | "keyword";
   matchedTerm?: string | null;
   confidence: Confidence;
+  /** Raw source taxonomy keys, prefixed: "osm:amenity=restaurant", "ovt:beauty_salon" — used for segment matching. */
+  categoryKeys?: string[];
+  /** Business opening date (CNPJ registry). Never estimated. */
+  openedAt?: string | null;
+  /** Registry size class ("MEI", "ME", "EPP", "DEMAIS") or the workspace's estimated_size. */
+  companySize?: string | null;
+  /** "open" | "closed" | "temporarily_closed" when the source states it (Overture). */
+  operatingStatus?: string | null;
+  description?: string | null;
+  /** When WE first saw this record (local DB: created_at). Defaults to collectedAt. */
+  firstSeenAt?: string | null;
+  /**
+   * Age of the underlying data, when the source states it (Overture import
+   * date, local updated_at). Live OSM answers have none: the fetch time
+   * (collectedAt) says nothing about when the map was last edited.
+   */
+  dataAsOf?: string | null;
 }
 
 export type MergeField =
@@ -210,6 +227,8 @@ export interface FieldValue<T = string> {
   confidence: Confidence;
   collectedAt: string;
   verifiedAt?: string | null;
+  /** Age of the underlying data when the source states it (see SourceCompany.dataAsOf). */
+  dataAsOf?: string | null;
 }
 
 export interface FieldConflict {
@@ -273,6 +292,113 @@ export interface UnifiedCompany {
   contacts?: { name: string; role: string | null; source: SourceKey }[];
   enrichment: { state: EnrichmentState; sources: SourceKey[]; message?: string | null };
   warnings: string[];
+  // ---- lead-qualification inputs (optional: older cached searches lack them) ----
+  cnae?: string | null;
+  categoryKeys?: string[];
+  openedAt?: string | null;
+  companySize?: string | null;
+  operatingStatus?: string | null;
+  description?: string | null;
+  openingHours?: string | null;
+  /** Homepage analysis (website_discovery enrichment) — only what the page itself showed. */
+  web?: WebPresence | null;
+  firstSeenAt?: string | null;
+  lastSeenAt?: string | null;
+  lastVerifiedAt?: string | null;
+  dataAsOf?: string | null;
+  /** Lead qualification (ICP fit, explainable score, confidence, tags, why). */
+  lead?: LeadQualification | null;
+}
+
+export interface WebPresence {
+  status: string; // ACTIVE | INACTIVE | TIMEOUT | ...
+  analyzedAt: string;
+  title: string | null;
+  description: string | null;
+  /** Video found ON the homepage: YouTube/Vimeo embeds, <video> tags, links to a channel. */
+  hasVideo: boolean;
+  videoPlatforms: string[];
+  hasBlog: boolean;
+  hasContactPage: boolean;
+  hasCta: boolean;
+  /** Words on the page that hint at launches, events, new units, booking. */
+  opportunityHints: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Lead qualification (see LEAD_QUALIFICATION.md)
+// ---------------------------------------------------------------------------
+
+export type LeadConfidence = "VERY_LOW" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
+
+/** CONFIRMED = a source published it; INFERRED = derived by a rule; UNKNOWN = not found (null). */
+export type DataStatus = "CONFIRMED" | "INFERRED" | "UNKNOWN";
+
+export type ScoreDimension = "fit" | "visual_need" | "digital_presence" | "opportunity" | "contactability" | "data_quality" | "recency";
+
+export interface ScoreItem {
+  key: string;
+  label: string;
+  points: number; // may be negative (penalties)
+  status: Exclude<DataStatus, "UNKNOWN">;
+  evidence: string;
+}
+
+export interface ScoreDimensionResult {
+  dimension: ScoreDimension;
+  label: string;
+  points: number; // 0..max after clamping
+  max: number;
+  items: ScoreItem[];
+}
+
+export interface LeadSignal {
+  key: string;
+  label: string;
+  status: Exclude<DataStatus, "UNKNOWN">;
+  evidence: string;
+  source: SourceKey | "rule" | null;
+}
+
+export interface LeadQualification {
+  version: number;
+  segment: string | null; // ICP segment key (catalog key) or null when unknown
+  segmentLabel: string | null;
+  segmentStatus: DataStatus; // how the segment was determined
+  segmentEvidence: string | null;
+  subcategory: string | null;
+  leadScore: number; // 0..100
+  scoreBreakdown: ScoreDimensionResult[];
+  confidence: LeadConfidence;
+  confidenceFactors: string[];
+  tags: string[];
+  signals: LeadSignal[];
+  /** Positive reasons, strongest first. */
+  qualificationReasons: string[];
+  /** Weaknesses/risks the prospector should know about. */
+  alerts: string[];
+  whyThisLead: string;
+  qualified: boolean;
+  /** Set when the validation step rejected the record (it is then filtered out, visibly). */
+  disqualified: { rule: string; reason: string } | null;
+  fieldStatus: Record<"phone" | "whatsapp" | "email" | "website" | "instagram" | "address" | "contactName", { status: DataStatus; source: SourceKey | null; note?: string }>;
+  /** Units of the same brand seen in this search (name/domain match at different addresses). */
+  locationCount: number;
+  computedAt: string;
+}
+
+export interface QualificationSummary {
+  icpName: string;
+  evaluated: number;
+  qualified: number;
+  disqualified: number;
+  avgScore: number;
+  avgConfidence: number; // 1..5
+  byConfidence: Record<LeadConfidence, number>;
+  bySegment: { segment: string; label: string; count: number; qualified: number; avgScore: number }[];
+  byNeighborhood: { neighborhood: string; count: number; qualified: number }[];
+  bySource: { source: SourceKey; leads: number; qualified: number; avgScore: number }[];
+  discardedByRule: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +475,7 @@ export interface SourceFunnelMetrics {
   duplicate: number; // merged into a record that another source/record also found
   filtered: number;
   accepted: number; // contributed to at least one final record
+  qualified?: number; // contributed to a final record that passed the ICP qualification
   enriched: number;
   durationMs: number;
   attempts: number;
@@ -417,6 +544,10 @@ export interface SearchDiagnostics {
   lowResultReasons: string[];
   deadlineHit: boolean;
   cancelled: boolean;
+  /** Records the validation step removed, with the rule — sample, so bad data stays inspectable. */
+  discardedSample?: { name: string; sources: SourceKey[]; rule: string; reason: string }[];
+  /** Neighborhood areas resolved for the neighborhood filter. */
+  neighborhoodAreas?: { name: string; resolved: boolean; source: string | null }[];
 }
 
 export interface SearchResponse {
@@ -437,6 +568,8 @@ export interface SearchResponse {
   userMessages: string[];
   coverage: { requested: number; found: number; percent: number };
   qualityScore: number;
+  /** Lead-qualification metrics (absent on searches cached before qualification existed). */
+  qualification?: QualificationSummary;
   durationMs: number;
   createdAt: string;
 }

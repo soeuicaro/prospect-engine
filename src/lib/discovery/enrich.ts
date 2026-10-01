@@ -35,11 +35,18 @@ type Writable = "legalName" | "street" | "houseNumber" | "neighborhood" | "city"
 
 export function applyEnrichment(company: UnifiedCompany, patch: EnrichmentPatch, priority: FieldPriority = DEFAULT_FIELD_PRIORITY, now = Date.now()): UnifiedCompany {
   const collectedAt = new Date(now).toISOString();
-  const confidence = patch.source === "cnpj_brasilapi" ? "HIGH" : patch.status === "SOURCE_SUCCESS_WITH_WARNINGS" ? "LOW" : "HIGH";
+  // Registry identity/address is authoritative; its phone/e-mail is often the
+  // accountant's. Contacts scraped from a homepage are the business's own
+  // words but unverified — MEDIUM, LOW when the domain did not match the name.
+  const baseConfidence = patch.status === "SOURCE_SUCCESS_WITH_WARNINGS" ? "LOW" : patch.source === "cnpj_brasilapi" ? "HIGH" : "MEDIUM";
+  const confidenceFor = (field: MergeField) =>
+    patch.source === "cnpj_brasilapi" && (field === "phone" || field === "email" || field === "whatsapp") ? "MEDIUM" : baseConfidence;
+  const confidence = baseConfidence;
+  const verifiedAt = patch.verified ? collectedAt : null;
 
   const setField = (field: MergeField, prop: Writable, value: string | null | undefined) => {
     if (!value || !value.trim()) return;
-    const incoming: FieldValue = { value: value.trim(), source: patch.source, confidence, collectedAt };
+    const incoming: FieldValue = { value: value.trim(), source: patch.source, confidence: confidenceFor(field), collectedAt, verifiedAt };
     const current = company.provenance[field];
     const currentValue = company[prop];
     if (!currentValue) {
@@ -70,6 +77,11 @@ export function applyEnrichment(company: UnifiedCompany, patch: EnrichmentPatch,
   }
   if (patch.fields.phone && !company.phones.includes(patch.fields.phone)) company.phones.push(patch.fields.phone);
   if (patch.fields.cnpjStatus && !company.cnpjStatus) company.cnpjStatus = patch.fields.cnpjStatus;
+  if (patch.fields.openedAt && !company.openedAt) company.openedAt = patch.fields.openedAt;
+  if (patch.fields.companySize && !company.companySize) company.companySize = patch.fields.companySize;
+  if (patch.fields.cnae && !company.cnae) company.cnae = patch.fields.cnae;
+  if (patch.web) company.web = patch.web;
+  if (verifiedAt && (!company.lastVerifiedAt || company.lastVerifiedAt < verifiedAt)) company.lastVerifiedAt = verifiedAt;
   if (patch.fields.cnpjStatus && patch.fields.cnpjStatus !== "ATIVA" && !company.warnings.some((w) => w.startsWith("Situação cadastral"))) {
     company.warnings.push(`Situação cadastral: ${patch.fields.cnpjStatus}`);
   }

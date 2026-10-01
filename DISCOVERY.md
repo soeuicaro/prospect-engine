@@ -27,7 +27,7 @@ City/UF inputs autocomplete from IBGE (`GET /api/geo/municipios`, memoized per s
 Nothing enters the pipeline until the user selects rows and clicks "Enviar para o pipeline" (stage NEW).
 ```
 
-Global deadline per depth: FAST 20s, BALANCED 40s, DEEP 55s. At the deadline, in-flight sources are
+Global deadline per depth: FAST 20s, BALANCED 45s, DEEP 85s (route maxDuration 120s). At the deadline, in-flight sources are
 aborted and get 1.5s to hand back what they have → `PARTIAL`. The user can cancel (closes the stream,
 aborts every request).
 
@@ -36,7 +36,7 @@ aborts every request).
 | | PRECISE | BALANCED (default) | BROAD |
 |---|---|---|---|
 | OSM tags | primary (`amenity=restaurant`) | + related (`fast_food`, `food_court`) | + broad (cafe, bar, pub, bakery…) |
-| Text terms | primary | + 2 secondary | + all secondary + synonyms |
+| Text terms | primary | + 2 secondary | + all secondary + all synonyms |
 | OSM name matching | – | – | yes (separate Overpass request) |
 | CNAEs (local DB) | primary | primary (+ related if checked) | primary + related |
 | Extra filters | CNPJ ATIVA/SUSPENSA, drops LOW confidence | none | none |
@@ -92,11 +92,11 @@ Missing phone/website/Instagram/CNPJ is **never** a filter. Every removal is cou
 | Limit | Value | Where |
 |---|---|---|
 | requested (goal) | user input, default 100 | a target — results are NOT truncated to it; "Mostrar top N" is a view toggle |
-| system | 1500 unique per search | `SYSTEM_RESULT_LIMIT` in context.ts, shown in debug |
-| Overpass | 1000 elements (`out center tags 1000`) | configurable |
+| system | 10 000 unique per search | `SYSTEM_RESULT_LIMIT` in context.ts, shown in debug |
+| Overpass | 5000 elements (`out center tags 5000`, builder cap 10 000) | configurable |
 | Nominatim | 40/page (API max) × 3 pages per term | exclude_place_ids pagination |
 | Photon | 50 per term (no pagination in the API) | |
-| Local DB | range pages of 1000 up to 2000 | configurable |
+| Local DB / Overture | range pages of 1000 up to 10 000; up to 20 name terms | configurable |
 | UI page | all rows by default (50/100/200/500 per page optional), client-side | discovery-results.tsx |
 
 ## Completeness / confidence / ranking

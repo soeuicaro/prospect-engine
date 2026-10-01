@@ -41,6 +41,7 @@ export interface PoiRow {
   latitude: number | null;
   longitude: number | null;
   imported_at: string;
+  operating_status?: string | null;
 }
 
 /** "Rua X, 123" → street "Rua X", number "123". */
@@ -75,8 +76,13 @@ export function poiRowToCompany(row: PoiRow, matchedBy: SourceCompany["matchedBy
     sourceRecordId: row.source_id,
     sourceUrl: null,
     collectedAt: row.imported_at,
+    // The import date is the age of this copy of the data (Overture releases monthly).
+    dataAsOf: row.imported_at,
+    firstSeenAt: row.imported_at,
     name: row.name,
     category: categoryLabel(row.category),
+    categoryKeys: [...new Set([row.category, ...(row.categories ?? [])].filter((c): c is string => Boolean(c)))].map((c) => `ovt:${c}`),
+    operatingStatus: row.operating_status ?? null,
     street,
     houseNumber,
     city: row.city,
@@ -122,10 +128,10 @@ export function createOvertureSource(deps: { supabase: SupabaseClient<Database>;
       const metadata = emptyMetadata("places_overture", env.config.maxResults);
       metadata.strategy = "city+category";
       const everything = context.industryKey === "todas" && !context.keywords.length;
-      const categories = everything ? null : overtureCategoriesFor(context.industryKey, context.mode);
+      const categories = everything ? null : (expansion.overtureCategories ?? overtureCategoriesFor(context.industryKey, context.mode));
       const terms = everything
         ? []
-        : [...new Set([...expansion.textTerms, ...expansion.nameKeywords, ...context.keywords].map(sanitizeForPostgrest).filter((t) => t.length >= 3))].slice(0, 12);
+        : [...new Set([...expansion.textTerms, ...expansion.nameKeywords, ...context.keywords].map(sanitizeForPostgrest).filter((t) => t.length >= 3))].slice(0, 20);
       const nicheParts = [
         ...(categories?.length ? [`categories.ov.{${categories.map((c) => `"${c}"`).join(",")}}`] : []),
         ...terms.map((t) => `name.ilike.*${t}*`),
@@ -142,7 +148,7 @@ export function createOvertureSource(deps: { supabase: SupabaseClient<Database>;
         if (env.signal.aborted) break;
         let query = deps.supabase
           .from("places_pois")
-          .select("id, source_id, release, name, category, categories, confidence, phones, websites, emails, socials, street, postcode, city, state, latitude, longitude, imported_at")
+          .select("id, source_id, release, name, category, categories, confidence, phones, websites, emails, socials, street, postcode, city, state, latitude, longitude, imported_at, operating_status")
           .eq("workspace_id", deps.workspaceId)
           .eq("state", context.state)
           .or(cityFilter);

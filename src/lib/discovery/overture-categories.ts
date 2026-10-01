@@ -52,8 +52,112 @@ export const OVERTURE_CATEGORIES: Record<string, Split> = {
   arquitetura: { primary: ["architectural_designer", "engineering_services"], related: ["design_service", "interior_design", "graphic_designer"] },
   eventos: {
     primary: ["party_and_event_planning", "event_or_party_service", "event_photography"],
-    related: ["event_venue", "party_supply", "caterer", "music_venue", "auditorium"],
+    related: ["event_venue", "party_supply", "caterer", "music_venue", "auditorium", "wedding_planning", "dj_service", "party_equipment_rental"],
   },
+  bar: {
+    primary: ["bar", "pub", "cocktail_bar", "beer_bar", "sports_bar", "wine_bar", "lounge", "dive_bar"],
+    related: ["night_club", "brewery", "beer_garden", "karaoke", "hookah_bar", "bar_and_grill_restaurant"],
+  },
+  sorveteria: {
+    primary: ["ice_cream_shop", "frozen_yoghurt_shop", "acai_bowls"],
+    related: ["desserts", "dessert_shop", "candy_store", "chocolatier", "smoothie_juice_bar", "juice_bar"],
+  },
+  supermercado: {
+    primary: ["supermarket", "grocery_store", "convenience_store", "food_and_beverage_store"],
+    related: ["butcher_shop", "meat_shop", "fruits_and_vegetables", "produce_store", "liquor_store", "beverage_store", "health_food_store", "farmers_market", "specialty_foods", "wholesale_store", "seafood_market"],
+  },
+  hospital: { primary: ["hospital", "emergency_room", "maternity_centers"], related: ["urgent_care_clinic", "medical_center"] },
+  laboratorio: {
+    primary: ["laboratory_testing", "diagnostic_services", "diagnostics_imaging_or_lab_service", "medical_laboratory"],
+    related: ["diagnostic_imaging", "radiologist", "blood_and_plasma_donation_center"],
+  },
+  nutricao: { primary: ["nutritionist", "dietitian"], related: ["weight_loss_center"] },
+  farmacia: { primary: ["pharmacy", "drugstore"], related: ["medical_supply", "cosmetic_and_beauty_supplies", "health_and_beauty_store"] },
+  otica: { primary: ["eyewear_and_optician", "optometrist", "optician"], related: ["eye_care_clinic", "vision_or_eye_care_clinic"] },
+  estetica: {
+    primary: ["beauty_salon", "skin_care", "hair_removal", "laser_hair_removal", "medical_spa", "day_spa", "spas"],
+    related: ["massage", "massage_therapy", "eyelash_service", "tanning_salon", "permanent_makeup", "wellness_service"],
+  },
+  tatuagem: { primary: ["tattoo_and_piercing", "tattoo", "piercing"], related: [] },
+  idiomas: {
+    primary: ["language_school"],
+    related: ["music_school", "dance_school", "art_school", "cooking_school", "computer_training", "vocational_and_technical_school", "specialty_school", "tutoring_center"],
+  },
+  autoescola: { primary: ["driving_school"], related: ["traffic_school"] },
+  advocacia: {
+    primary: ["lawyer", "law_firm", "attorney", "legal_services"],
+    related: ["divorce_and_family_law", "criminal_defense_law", "personal_injury_law", "employment_law", "estate_planning_law", "immigration_law", "tax_law", "bankruptcy_law", "business_law", "real_estate_law", "general_litigation", "labor_law", "notary_public", "paralegal_services"],
+  },
+  contabilidade: { primary: ["accountant", "accounting", "bookkeeper", "tax_services"], related: ["tax_preparation", "tax_advisor", "payroll_services", "financial_advising"] },
+  cartorio: { primary: ["notary_public"], related: ["legal_services", "public_service_and_government"] },
+  "b2b-servicos": {
+    primary: ["business_consulting", "professional_services", "business_management_services", "consultant"],
+    related: ["employment_agencies", "human_resource_services", "coworking_space", "office_space", "business_to_business", "b2b_service", "business_advertising", "translation_services"],
+  },
+  marketing: {
+    primary: ["advertising_agency", "marketing_agency", "marketing_consultant", "social_media_agency"],
+    related: ["public_relations", "graphic_designer", "web_designer", "media_agency", "video_film_production", "branding"],
+  },
+  tecnologia: {
+    primary: ["software_development", "information_technology_company", "it_service_and_computer_repair", "it_consultant"],
+    related: ["web_designer", "internet_service_provider", "telecommunications_company", "computer_hardware_company", "data_recovery"],
+  },
+  seguros: { primary: ["insurance_agency", "insurance_broker"], related: ["auto_insurance", "health_insurance_office", "life_insurance"] },
+  financeiro: {
+    primary: ["bank_credit_union", "banks", "bank", "credit_union"],
+    related: ["financial_service", "loan_provider", "currency_exchange", "check_cashing_payday_loans", "financial_advising", "investment_management_company"],
+  },
+  "material-construcao": {
+    primary: ["building_supply_store", "hardware_store", "hardware_home_and_garden_store", "home_improvement_store"],
+    related: ["paint_store", "flooring_store", "tile_store", "lumber_store", "glass_and_mirror_sales_service", "electrical_supply_store", "plumbing_supply_store", "kitchen_and_bath"],
+  },
+  "moveis-decoracao": {
+    primary: ["furniture_store", "cabinet_sales_service", "kitchen_and_bath", "home_decor"],
+    related: ["mattress_store", "interior_design", "carpenter", "upholstery_shop", "window_treatment_store", "lighting_store", "home_goods_store", "rug_store"],
+  },
+  manutencao: {
+    primary: ["electrician", "plumbing", "plumber", "hvac_services", "air_conditioning_and_heating"],
+    related: ["locksmith", "metal_fabricator", "welder", "glass_and_mirror_sales_service", "handyman", "home_service", "security_systems", "garage_door_service"],
+  },
+  "energia-solar": { primary: ["solar_installation", "solar_panel_installation", "solar_energy_equipment_supplier"], related: ["electrician", "energy_company", "renewable_energy"] },
+  limpeza: {
+    primary: ["cleaning_services", "janitorial_services", "pest_control", "pest_control_service"],
+    related: ["home_cleaning", "carpet_cleaning", "landscaping", "gardener", "security_services", "pressure_washing"],
+  },
+  lavanderia: { primary: ["laundromat", "dry_cleaning", "laundry_services"], related: ["clothing_alterations"] },
+  turismo: { primary: ["travel_agency", "travel_services", "tour_operator"], related: ["tours", "sightseeing_tour_agency", "travel_agents", "bus_tours"] },
+  fotografia: {
+    primary: ["photographer", "photography_store_and_services", "event_photography"],
+    related: ["videographer", "video_film_production", "photo_booth_rental", "portrait_studio", "wedding_photography"],
+  },
+  grafica: {
+    primary: ["printing_services", "print_shop", "printer"],
+    related: ["signmaking", "sign_making", "screen_printing_t_shirt_printing", "promotional_products", "copy_shop", "graphic_designer"],
+  },
+  joalheria: { primary: ["jewelry_store", "watch_store"], related: ["gift_shop", "flowers_and_gifts_shop", "fashion_accessories_store", "jewelry_repair_service", "watch_repair_service"] },
+  eletronicos: {
+    primary: ["mobile_phone_store", "electronics", "computer_store", "electronics_store"],
+    related: ["mobile_phone_repair", "electronics_repair_shop", "computer_repair", "appliance_store", "video_game_store", "it_service_and_computer_repair", "telecommunications"],
+  },
+  papelaria: { primary: ["office_supply_store", "stationery_store", "bookstore", "books_mags_music_and_video"], related: ["toy_store", "party_supply", "arts_and_crafts", "fabric_store", "hobby_shop", "educational_supply_store"] },
+  esportes: { primary: ["sporting_goods", "sports_and_fitness_store", "bicycle_shop"], related: ["outdoor_gear", "fishing_supply_store", "vitamins_and_supplements", "bike_repair_maintenance", "surf_shop"] },
+  floricultura: { primary: ["florist", "flowers_and_gifts_shop"], related: ["nursery_and_gardening", "garden_center", "landscaping"] },
+  agro: {
+    primary: ["agricultural_service", "farm_equipment_and_supply", "feed_store", "farming_equipment_store"],
+    related: ["farm", "agriculture", "agricultural_cooperatives", "livestock_breeder", "seed_supplier", "irrigation"],
+  },
+  posto: { primary: ["gas_station", "fuel_station"], related: ["convenience_store", "ev_charging_station", "propane_supplier"] },
+  locadora: { primary: ["car_rental_agency", "car_rental"], related: ["equipment_rental", "truck_rentals", "motorcycle_rentals", "party_equipment_rental"] },
+  transporte: {
+    primary: ["logistics", "freight_and_cargo_service", "trucking_company", "shipping_center", "courier_service"],
+    related: ["moving_company", "movers", "freight_forwarding_agency", "warehouses", "delivery_service", "shipping_and_delivery_service", "bus_service"],
+  },
+  industria: {
+    primary: ["manufacturing", "manufacturers", "industrial_company", "factory"],
+    related: ["metal_fabricator", "textile_mill", "food_beverage_service_distribution", "wholesale_store", "wholesaler", "industrial_equipment", "plastic_manufacturer", "furniture_manufacturers", "clothing_company"],
+  },
+  funeraria: { primary: ["funeral_services_and_cemeteries", "funeral_home"], related: ["cemetery", "cremation_services"] },
+  costura: { primary: ["tailor", "sewing_and_alterations", "clothing_alterations"], related: ["fabric_store", "shoe_repair", "embroidery_and_crochet", "uniform_store", "custom_clothing"] },
 };
 
 /** Categories for a niche at a mode, or null when the niche has no mapping (fall back to text terms). */

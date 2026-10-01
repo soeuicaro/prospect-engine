@@ -8,7 +8,7 @@
 import type { WebsiteAnalysisResult } from "@/lib/providers/website-analyzer";
 import { domainMatchesName, normalizeSocial, websiteDomain } from "../normalize";
 import { throttleFor } from "../rate-limit";
-import type { SocialMap, UnifiedCompany } from "../types";
+import type { SocialMap, UnifiedCompany, WebPresence } from "../types";
 import type { EnrichmentPatch, EnrichmentSource, SourceEnv } from "./base";
 
 type Analyze = (url: string) => Promise<WebsiteAnalysisResult>;
@@ -62,6 +62,7 @@ export function createWebsiteSource(deps: { analyze: Analyze }): EnrichmentSourc
             source: "website_discovery",
             status: result.status === "TIMEOUT" ? "SOURCE_TIMEOUT" : "NO_RESULTS_FROM_SOURCE",
             fields: {},
+            web: webPresenceOf(result, started),
             message: `Site ${result.status === "TIMEOUT" ? "não respondeu" : "indisponível"} (${result.flags.join(", ") || result.status})`,
             logs: [log],
             durationMs: Date.now() - started,
@@ -76,6 +77,9 @@ export function createWebsiteSource(deps: { analyze: Analyze }): EnrichmentSourc
           source: "website_discovery",
           status: match === "LOW" ? "SOURCE_SUCCESS_WITH_WARNINGS" : "SOURCE_SUCCESS",
           fields: { phone: result.phone, email: result.email, whatsapp: result.whatsapp, socials },
+          web: webPresenceOf(result, started),
+          // A site that does not look like this business does not verify it.
+          verified: match !== "LOW",
           message: match === "LOW" ? `Domínio ${host} não parece corresponder ao nome da empresa — revise.` : null,
           logs: [log],
           durationMs: Date.now() - started,
@@ -91,6 +95,21 @@ export function createWebsiteSource(deps: { analyze: Analyze }): EnrichmentSourc
         };
       }
     },
+  };
+}
+
+export function webPresenceOf(r: WebsiteAnalysisResult, at: number): WebPresence {
+  return {
+    status: r.status,
+    analyzedAt: new Date(at).toISOString(),
+    title: r.title,
+    description: r.description,
+    hasVideo: r.video?.hasVideo ?? false,
+    videoPlatforms: r.video?.platforms ?? [],
+    hasBlog: r.hasBlog,
+    hasContactPage: !r.flags.includes("NO_CONTACT_PAGE") && r.status === "ACTIVE",
+    hasCta: !r.flags.includes("MISSING_CTA") && r.status === "ACTIVE",
+    opportunityHints: r.opportunityHints ?? [],
   };
 }
 
