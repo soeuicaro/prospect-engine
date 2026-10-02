@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronRight, Loader2, Wand2 } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, ChevronDown, ChevronRight, Loader2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { displayPhone } from "@/lib/domain/contact-links";
 import { getSourceDefinition, sourceLabel } from "@/lib/discovery/registry";
 import { foldText, hostOf } from "@/lib/discovery/normalize";
 import { COMPLETENESS_WEIGHTS, completenessBreakdown } from "@/lib/discovery/completeness";
+import { visibilityOf, type Visibility } from "@/lib/discovery/visibility";
 import type { MergeField, UnifiedCompany } from "@/lib/discovery/types";
 import { CompletenessBadge, ConfidencePill, QualityBadge, SourceBadges } from "./badges";
 import { COMPLETENESS_FIELD_LABEL } from "./discovery-summary";
@@ -48,6 +49,12 @@ const FIELD_LABEL: Partial<Record<MergeField, string>> = {
   youtube: "YouTube",
 };
 
+type Sort = "rank" | "completeness" | "name" | "visibility";
+type SortDir = "asc" | "desc";
+
+/** Direction each sort starts in when picked. Visibility starts ascending: least-known first. */
+const DEFAULT_DIR: Record<Sort, SortDir> = { rank: "desc", completeness: "desc", name: "asc", visibility: "asc" };
+
 type Filter = "all" | "new" | "existing" | "review" | "no_phone" | "no_website" | "with_owner";
 
 export function DiscoveryResults({
@@ -67,17 +74,23 @@ export function DiscoveryResults({
 }) {
   const [topOnly, setTopOnly] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<"rank" | "completeness" | "name">("rank");
+  const [sort, setSort] = useState<Sort>("rank");
+  const [dir, setDir] = useState<SortDir>(DEFAULT_DIR.rank);
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  const visibility = useMemo(() => new Map<string, Visibility>(results.map((c) => [c.key, visibilityOf(c)])), [results]);
+
   const view = useMemo(() => {
     let list = [...results];
-    if (sort === "completeness") list.sort((a, b) => b.completeness - a.completeness);
-    else if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-    else list.sort((a, b) => b.rankScore - a.rankScore);
+    const sign = dir === "asc" ? 1 : -1;
+    if (sort === "completeness") list.sort((a, b) => sign * (a.completeness - b.completeness));
+    else if (sort === "name") list.sort((a, b) => sign * a.name.localeCompare(b.name, "pt-BR"));
+    else if (sort === "visibility")
+      list.sort((a, b) => sign * (visibility.get(a.key)!.score - visibility.get(b.key)!.score) || b.rankScore - a.rankScore);
+    else list.sort((a, b) => sign * (a.rankScore - b.rankScore));
     if (topOnly) list = list.slice(0, limit);
     if (q.trim()) {
       const f = foldText(q);
@@ -90,7 +103,7 @@ export function DiscoveryResults({
     if (filter === "no_website") list = list.filter((c) => !c.website);
     if (filter === "with_owner") list = list.filter((c) => c.contacts?.length);
     return list;
-  }, [results, sort, topOnly, limit, q, filter]);
+  }, [results, sort, dir, visibility, topOnly, limit, q, filter]);
 
   const size = pageSize || Math.max(1, view.length);
   const pages = Math.max(1, Math.ceil(view.length / size));
@@ -119,15 +132,29 @@ export function DiscoveryResults({
         />
         <ChoiceSelect
           value={sort}
-          onValueChange={(v) => setSort(v as typeof sort)}
-          className="w-44"
+          onValueChange={(v) => { setSort(v as Sort); setDir(DEFAULT_DIR[v as Sort]); setPage(1); }}
+          className="w-52"
           aria-label="Ordenar por"
           options={[
             { value: "rank", label: "Relevância" },
+            { value: "visibility", label: "Visibilidade (estimada)" },
             { value: "completeness", label: "Completude" },
             { value: "name", label: "Nome" },
           ]}
         />
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => { setDir((d) => (d === "asc" ? "desc" : "asc")); setPage(1); }}
+          title={
+            sort === "visibility"
+              ? dir === "asc" ? "Menos conhecidas primeiro — clique para inverter" : "Mais conhecidas primeiro — clique para inverter"
+              : "Inverter a ordem"
+          }
+        >
+          {dir === "asc" ? <ArrowUpNarrowWide className="size-3.5" /> : <ArrowDownWideNarrow className="size-3.5" />}
+          {sort === "visibility" ? (dir === "asc" ? "Menos conhecidas primeiro" : "Mais conhecidas primeiro") : dir === "asc" ? "Crescente" : "Decrescente"}
+        </Button>
         {results.length > limit && (
           <label className="flex items-center gap-2">
             <Checkbox checked={topOnly} onCheckedChange={(v) => { setTopOnly(Boolean(v)); setPage(1); }} />
@@ -214,6 +241,7 @@ export function DiscoveryResults({
                         {c.possibleDuplicates.length > 0 && <span className="text-violet-700">possível duplicata</span>}
                         {c.enrichment.state === "RUNNING" && <Loader2 className="size-3 animate-spin" />}
                         {c.enrichment.state === "DONE" && <span className="text-emerald-700">enriquecida</span>}
+                        <VisibilityTag visibility={visibility.get(c.key)!} />
                       </div>
                     </TableCell>
                     <TableCell className="max-w-48 text-xs">
@@ -430,5 +458,18 @@ function ResultDetail({ company: c, onEnrich }: { company: UnifiedCompany; onEnr
         </div>
       </div>
     </div>
+  );
+}
+
+function VisibilityTag({ visibility }: { visibility: Visibility }) {
+  const { score, reasons } = visibility;
+  const tone = score < 25 ? "text-emerald-700" : score < 60 ? "text-amber-700" : "text-muted-foreground";
+  const title =
+    `Visibilidade estimada ${score}/100 (não é dado real de buscas — vem de fontes, site, redes e porte)` +
+    (reasons.length ? `:\n• ${reasons.join("\n• ")}` : ": nenhum sinal de presença encontrado");
+  return (
+    <span className={tone} title={title}>
+      visib. {score}
+    </span>
   );
 }
